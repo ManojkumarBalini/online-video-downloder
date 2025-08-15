@@ -5,7 +5,6 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const EventEmitter = require('events');
 const util = require('util');
-const os = require('os');
 const axios = require('axios');
 const stream = require('stream');
 const { promisify } = require('util');
@@ -17,14 +16,17 @@ const app = express();
 const PORT = 3000;
 app.use(express.json());
 
+// Create directories
 const downloadsDir = path.join(__dirname, 'downloads');
+const binDir = path.join(__dirname, 'bin');
 if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir);
+if (!fs.existsSync(binDir)) fs.mkdirSync(binDir);
 
 const progressEmitter = new EventEmitter();
 
-// Use system-installed binaries
-const ffmpegCommand = 'ffmpeg';
-const ytDlpCommand = 'yt-dlp';
+// Local binary paths
+const ffmpegCommand = path.join(binDir, 'ffmpeg');
+const ytDlpCommand = path.join(binDir, 'yt-dlp');
 
 // Startup checks
 async function checkCmdVersion(cmd, args = ['--version']) {
@@ -38,8 +40,20 @@ async function checkCmdVersion(cmd, args = ['--version']) {
 }
 
 async function init() {
-    const ytCheck = await checkCmdVersion(ytDlpCommand);
-    const ffCheck = await checkCmdVersion(ffmpegCommand);
+    // Check if binaries exist
+    const ytExists = fs.existsSync(ytDlpCommand);
+    const ffExists = fs.existsSync(ffmpegCommand);
+    
+    if (!ytExists) {
+        console.error('❌ yt-dlp binary not found at', ytDlpCommand);
+    }
+    if (!ffExists) {
+        console.error('❌ ffmpeg binary not found at', ffmpegCommand);
+    }
+
+    // Run version checks if binaries exist
+    const ytCheck = ytExists ? await checkCmdVersion(ytDlpCommand) : { ok: false, error: 'Binary not found' };
+    const ffCheck = ffExists ? await checkCmdVersion(ffmpegCommand) : { ok: false, error: 'Binary not found' };
 
     console.log('yt-dlp:', ytCheck);
     console.log('ffmpeg:', ffCheck);
@@ -277,7 +291,7 @@ app.post('/api/download', async (req, res) => {
         '--console-title',
         '--newline',
         '--progress',
-        '--ffmpeg-location', '/usr/bin',
+        '--ffmpeg-location', binDir,
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         '--no-playlist',
         '-o', `${baseOutput}.%(ext)s`,
