@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Video Downloader</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="particles" id="particles"></div>
+    
+    <!-- Quick Actions Toolbar -->
+    <div class="quick-actions">
+        <button id="pasteBtn" title="Paste URL">
+            <i class="fas fa-paste"></i>
+        </button>
+        <button id="clearBtn" title="Clear Input">
+            <i class="fas fa-times"></i>
+        </button>
+        <button id="voiceBtn" title="Voice Command">
+            <i class="fas fa-microphone"></i>
+        </button>
+        <button id="historyBtn" title="Download History">
+            <i class="fas fa-history"></i>
+        </button>
+    </div>
+
+    <!-- Download History Panel -->
+    <div class="history-panel" id="historyPanel">
+        <div class="history-header">
+            <h3>Download History</h3>
+            <button id="closeHistory"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="history-list" id="historyList"></div>
+    </div>
+
+    <!-- Audio Selection Modal -->
+    <div id="audioModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Select Audio Quality</h3>
+                <button id="closeModal" class="close-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p>This video format doesn't include audio. Please select an audio track:</p>
+                <div class="audio-options" id="audioOptions"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelAudio">Cancel</button>
+                <button id="confirmAudio">Download with Audio</button>
+            </div>
+        </div>
+    </div>
+
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <a href="#" class="logo">
+                    <i class="fas fa-download"></i>
+                    <span>Online</span>Video Downloader
+                </a>
+                <nav>
+                    <ul>
+                        <li><a href="#home">Home</a></li>
+                        <li><a href="#how-it-works">How It Works</a></li>
+                        <li><a href="#features">Features</a></li>
+                        <li><a href="#supported-sites">Supported Sites</a></li>
+                        <li><a href="#faq">FAQ</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <section id="home" class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1>Download Videos in <br>Stunning 4K Quality</h1>
+                <p>The world's most advanced video downloader. Lightning fast, crystal clear quality, and completely free.</p>
+                <div class="platform-tabs">
+                    <div class="platform-tab active" data-platform="youtube">
+                        <i class="fab fa-youtube"></i>
+                        <span>YouTube</span>
+                    </div>
+                    <div class="platform-tab" data-platform="instagram">
+                        <i class="fab fa-instagram"></i>
+                        <span>Instagram</span>
+                    </div>
+                    <div class="platform-tab" data-platform="twitter">
+                        <i class="fab fa-twitter"></i>
+                        <span>Twitter (X)</span>
+                    </div>
+                    <div class="platform-tab" data-platform="facebook">
+                        <i class="fab fa-facebook"></i>
+                        <span>Facebook</span>
+                    </div>
+                    <div class="platform-tab" data-platform="paste">
+                        <i class="fas fa-paste"></i>
+                        <span>Any Video URL</span>
+                    </div>
+                </div>
+                <div class="main-input">
+                    <div class="drag-drop-zone" id="dragDropZone">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <p>Drop video URL here</p>
+                        <p class="small">or paste in the input below</p>
+                    </div>
+                    <h2 class="section-title">Paste Video URL</h2>
+                    <div class="input-group">
+                        <input type="text" class="url-input" placeholder="https://www.youtube.com/watch?v=..." id="videoUrl">
+                        <button class="download-btn" id="fetchBtn">
+                            <i class="fas fa-download"></i> Fetch Video
+                        </button>
+                    </div>
+                    <p id="platformHint">YouTube videos in 4K, 8K, HD, or MP3 format</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="how-it-works" class="section">
+        <div class="container">
+            <h2 class="section-title">How It Works</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>Paste URL</h3>
+                    <p>Copy and paste the video URL from any supported platform</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>Select Quality</h3>
+                    <p>Choose from available resolutions and formats</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>Download</h3>
+                    <p>Get your high-quality video in seconds</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="features" class="section">
+        <div class="container">
+            <h2 class="section-title">Why Choose Online Downloader?</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-hd"></i>
+                    </div>
+                    <h3>4K Ultra HD</h3>
+                    <p>Download videos in stunning 4K resolution with no quality loss</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-bolt"></i>
+                    </div>
+                    <h3>Lightning Fast</h3>
+                    <p>Industry-leading download speeds powered by our global CDN</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h3>Safe & Secure</h3>
+                    <p>No registration required. Your privacy is our priority</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-mobile-alt"></i>
+                    </div>
+                    <h3>Fully Responsive</h3>
+                    <p>Works perfectly on desktop, tablet and mobile devices</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-infinity"></i>
+                    </div>
+                    <h3>Unlimited Downloads</h3>
+                    <p>No restrictions on video length or download quantity</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-sync"></i>
+                    </div>
+                    <h3>Always Updated</h3>
+                    <p>We constantly update to support the latest platforms</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="supported-sites" class="section">
+        <div class="container">
+            <h2 class="section-title">Supported Sites</h2>
+            <div class="supported-grid">
+                <div class="supported-card">
+                    <i class="fab fa-youtube"></i>
+                    <h3>YouTube</h3>
+                </div>
+                <div class="supported-card">
+                    <i class="fab fa-instagram"></i>
+                    <h3>Instagram</h3>
+                </div>
+                <div class="supported-card">
+                    <i class="fab fa-twitter"></i>
+                    <h3>Twitter</h3>
+                </div>
+                <div class="supported-card">
+                    <i class="fab fa-facebook"></i>
+                    <h3>Facebook</h3>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="faq" class="section">
+        <div class="container">
+            <h2 class="section-title">Frequently Asked Questions</h2>
+            <div class="faq-list">
+                <div class="faq-item">
+                    <h3>Is this service free?</h3>
+                    <p>Yes, Online Downloader is completely free to use with no hidden fees.</p>
+                </div>
+                <div class="faq-item">
+                    <h3>What video formats are supported?</h3>
+                    <p>We support MP4, WEBM, MKV and more. You can choose your preferred format.</p>
+                </div>
+                <div class="faq-item">
+                    <h3>Is there a download limit?</h3>
+                    <p>No, you can download as many videos as you want without any restrictions.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="results-section" id="resultsSection" style="display: none;">
+        <div class="container">
+            <div class="video-card">
+                <div class="video-header">
+                    <img src="" alt="Video thumbnail" class="video-thumbnail" id="videoThumb">
+                    <div class="video-overlay">
+                        <h2 class="video-title" id="videoTitle">Video Title</h2>
+                        <div class="video-meta">
+                            <span><i class="fas fa-clock"></i> <span id="videoDuration">00:00</span></span>
+                            <span><i class="fas fa-eye"></i> <span id="videoViews">0 views</span></span>
+                            <span><i class="fas fa-calendar"></i> <span id="videoDate">Jan 1, 2023</span></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="video-content">
+                    <h3 class="section-title">Available Resolutions</h3>
+                    <div class="quality-options" id="qualityOptions"></div>
+                    
+                    <div class="download-status" id="downloadStatus">
+                        <h3>Downloading your video...</h3>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="status-text" id="statusText">Preparing download...</div>
+                    </div>
+                    <div class="completed-download" id="completedDownload">
+                        <i class="fas fa-check-circle"></i>
+                        <h3>Download Complete!</h3>
+                        <p>Your video has been saved to your device</p>
+                        <button class="download-action" id="newDownload">
+                            <i class="fas fa-redo"></i> Download Another Video
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-column">
+                    <h3>About Online Downloader</h3>
+                    <p>The world's most advanced video download platform. Download videos in stunning 4K quality from all major platforms.</p>
+                    <div class="social-links">
+                        <a href="#"><i class="fab fa-facebook-f"></i></a>
+                        <a href="#"><i class="fab fa-twitter"></i></a>
+                        <a href="#"><i class="fab fa-instagram"></i></a>
+                        <a href="#"><i class="fab fa-youtube"></i></a>
+                    </div>
+                </div>
+                <div class="footer-column">
+                    <h3>Quick Links</h3>
+                    <ul>
+                        <li><a href="#home">Home</a></li>
+                        <li><a href="#how-it-works">How It Works</a></li>
+                        <li><a href="#features">Features</a></li>
+                        <li><a href="#supported-sites">Supported Sites</a></li>
+                        <li><a href="#faq">FAQ</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h3>Legal</h3>
+                    <ul>
+                        <li><a href="#">Terms of Service</a></li>
+                        <li><a href="#">Privacy Policy</a></li>
+                        <li><a href="#">Copyright Policy</a></li>
+                        <li><a href="#">Disclaimer</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h3>Contact Us</h3>
+                    <ul>
+                        <li><i class="fas fa-envelope"></i> balnemanojkumar@gmail.com</li>
+                        <li><i class="fas fa-globe"></i> www.onlinedownloader.com</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="copyright">
+                <p>&copy; 2025 Online Downloader. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
