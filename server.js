@@ -13,7 +13,7 @@ const pipeline = promisify(stream.pipeline);
 const promisifiedExec = util.promisify(require('child_process').exec);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // Create directories
@@ -53,7 +53,7 @@ async function init() {
 
     // Run version checks if binaries exist
     const ytCheck = ytExists ? await checkCmdVersion(ytDlpCommand) : { ok: false, error: 'Binary not found' };
-    const ffCheck = ffExists ? await checkCmdVersion(ffmpegCommand) : { ok: false, error: 'Binary not found' };
+    const ffCheck = ffExists ? await checkCmdVersion(ffmpegCommand, ['-version']) : { ok: false, error: 'Binary not found' };
 
     console.log('yt-dlp:', ytCheck);
     console.log('ffmpeg:', ffCheck);
@@ -75,6 +75,8 @@ app.post('/api/info', async (req, res) => {
             '--no-warnings',
             '--ignore-errors',
             '--no-check-certificates',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            '--referer', 'https://www.youtube.com/',
             videoUrl
         ];
 
@@ -293,6 +295,7 @@ app.post('/api/download', async (req, res) => {
         '--progress',
         '--ffmpeg-location', binDir,
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        '--referer', 'https://www.youtube.com/',
         '--no-playlist',
         '-o', `${baseOutput}.%(ext)s`,
         url
@@ -455,6 +458,8 @@ async function fetchVideoInfo(url) {
             '--no-warnings',
             '--ignore-errors',
             '--no-check-certificates',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            '--referer', 'https://www.youtube.com/',
             url
         ];
 
