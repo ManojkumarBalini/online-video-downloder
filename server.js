@@ -64,6 +64,19 @@ async function init() {
 
 init();
 
+// Enhanced YouTube headers
+const youtubeHeaders = [
+    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    '--referer', 'https://www.youtube.com/',
+    '--cookies', 'from-browser',
+    '--add-header', 'Accept: */*',
+    '--add-header', 'Accept-Language: en-US,en;q=0.9',
+    '--add-header', 'Sec-Fetch-Dest: empty',
+    '--add-header', 'Sec-Fetch-Mode: cors',
+    '--add-header', 'Sec-Fetch-Site: same-origin',
+    '--add-header', 'Origin: https://www.youtube.com'
+];
+
 // Get video info endpoint
 app.post('/api/info', async (req, res) => {
     const videoUrl = req.body.url;
@@ -75,8 +88,7 @@ app.post('/api/info', async (req, res) => {
             '--no-warnings',
             '--ignore-errors',
             '--no-check-certificates',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            '--referer', 'https://www.youtube.com/',
+            ...youtubeHeaders,
             videoUrl
         ];
 
@@ -294,8 +306,7 @@ app.post('/api/download', async (req, res) => {
         '--newline',
         '--progress',
         '--ffmpeg-location', binDir,
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        '--referer', 'https://www.youtube.com/',
+        ...youtubeHeaders,
         '--no-playlist',
         '-o', `${baseOutput}.%(ext)s`,
         url
@@ -458,8 +469,7 @@ async function fetchVideoInfo(url) {
             '--no-warnings',
             '--ignore-errors',
             '--no-check-certificates',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            '--referer', 'https://www.youtube.com/',
+            ...youtubeHeaders,
             url
         ];
 
