@@ -8,7 +8,11 @@ echo "Installing yt-dlp..."
 curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o bin/yt-dlp
 chmod a+rx bin/yt-dlp
 
-# Install ffmpeg from reliable source
+# Install required Python packages for HTTPS proxy support
+echo "Installing Python dependencies..."
+pip install requests
+
+# Install ffmpeg
 echo "Installing ffmpeg..."
 curl -L -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
 tar -xf ffmpeg.tar.xz
