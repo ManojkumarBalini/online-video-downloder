@@ -1,3 +1,7 @@
+// server.js (updated)
+// Combines robust yt-dlp usage, verbose logging for Render logs (no shell needed),
+// cookie/env handling, and your existing download/info/progress flow.
+
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -19,66 +23,116 @@ app.use(express.json());
 // Create directories
 const downloadsDir = path.join(__dirname, 'downloads');
 const binDir = path.join(__dirname, 'bin');
-if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir);
-if (!fs.existsSync(binDir)) fs.mkdirSync(binDir);
+if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
+if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
 
 const progressEmitter = new EventEmitter();
 
-// Local binary paths
-const ffmpegCommand = path.join(binDir, 'ffmpeg');
-const ytDlpCommand = path.join(binDir, 'yt-dlp');
+// Local binary paths (prefer bundled ./bin/ directory)
+const ffmpegCommand = fs.existsSync(path.join(binDir, 'ffmpeg')) ? path.join(binDir, 'ffmpeg') : 'ffmpeg';
+const ytDlpCommand = fs.existsSync(path.join(binDir, 'yt-dlp')) ? path.join(binDir, 'yt-dlp') : 'yt-dlp';
+const cookieFilePath = path.join(binDir, 'cookies.txt');
+
+// If user provided cookie content as an env var (RENDER secret), write to file at startup
+if (process.env.YTDLP_COOKIES && !fs.existsSync(cookieFilePath)) {
+    try {
+        fs.writeFileSync(cookieFilePath, process.env.YTDLP_COOKIES, { mode: 0o600 });
+        console.log('Wrote cookies file to', cookieFilePath);
+    } catch (e) {
+        console.warn('Failed to write cookies file from YTDLP_COOKIES env:', e.message);
+    }
+}
 
 // Enhanced YouTube headers
 function getYoutubeHeaders() {
     return [
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        '--referer', 'https://www.youtube.com/',
+        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        '--add-header', 'Referer: https://www.youtube.com/',
         '--add-header', 'Accept: */*',
         '--add-header', 'Accept-Language: en-US,en;q=0.9',
-        '--add-header', 'Sec-Fetch-Dest: empty',
-        '--add-header', 'Sec-Fetch-Mode: cors',
-        '--add-header', 'Sec-Fetch-Site: same-origin',
         '--add-header', 'Origin: https://www.youtube.com'
     ];
 }
 
-// Startup checks
+// Utility: run shell command to check versions (used on init)
 async function checkCmdVersion(cmd, args = ['--version']) {
     try {
         const { stdout, stderr } = await promisifiedExec(`${cmd} ${args.join(' ')}`);
-        if (stderr) return { ok: true, version: stderr.split('\n')[0] || '' };
+        if (stderr && stderr.trim()) return { ok: true, version: stderr.split('\n')[0] || '' };
         return { ok: true, version: stdout.split('\n')[0] || '' };
     } catch (e) {
         return { ok: false, error: e.message };
     }
 }
 
+// Init: print versions / existence
 async function init() {
-    // Check if binaries exist
-    const ytExists = fs.existsSync(ytDlpCommand);
-    const ffExists = fs.existsSync(ffmpegCommand);
-    
-    if (!ytExists) {
-        console.error('❌ yt-dlp binary not found at', ytDlpCommand);
-    }
-    if (!ffExists) {
-        console.error('❌ ffmpeg binary not found at', ffmpegCommand);
-    }
+    console.log('Using yt-dlp:', ytDlpCommand, 'exists=', fs.existsSync(ytDlpCommand));
+    console.log('Using ffmpeg:', ffmpegCommand, 'exists=', fs.existsSync(ffmpegCommand));
 
-    // Run version checks if binaries exist
-    const ytCheck = ytExists ? await checkCmdVersion(ytDlpCommand) : { ok: false, error: 'Binary not found' };
-    const ffCheck = ffExists ? await checkCmdVersion(ffmpegCommand, ['-version']) : { ok: false, error: 'Binary not found' };
+    const ytCheck = fs.existsSync(ytDlpCommand) ? await checkCmdVersion(ytDlpCommand) : { ok: false, error: 'Binary not found' };
+    const ffCheck = fs.existsSync(path.join(binDir, 'ffmpeg')) ? await checkCmdVersion(ffmpegCommand, ['-version']) : { ok: false, error: 'Binary not found in bin; fallback may exist on PATH' };
 
     console.log('yt-dlp:', ytCheck);
     console.log('ffmpeg:', ffCheck);
 
-    if (!ytCheck.ok) console.warn('⚠️ yt-dlp not found or not runnable by this Node process.');
-    if (!ffCheck.ok) console.warn('⚠️ ffmpeg not found or not runnable by this Node process.');
+    if (!ytCheck.ok) console.warn('⚠️ yt-dlp not found or not runnable by this Node process. Install or ensure bin/yt-dlp exists.');
+    if (!ffCheck.ok) console.warn('⚠️ ffmpeg not found in bin (or not runnable). Some merges/metadata embedding may fail.');
 }
-
 init();
 
-// Get video info endpoint
+// Helper: tail last N lines of string
+function tail(text = '', lines = 40) {
+    if (!text) return '';
+    const arr = text.split('\n');
+    return arr.slice(-lines).join('\n');
+}
+
+// Spawn yt-dlp with verbose logging and capture outputs
+function spawnYtdlp(args = [], opts = {}) {
+    return new Promise((resolve, reject) => {
+        const exe = fs.existsSync(ytDlpCommand) ? ytDlpCommand : 'yt-dlp';
+        // Add verbose & ignore config to make logs deterministic and helpful
+        const fullArgs = ['-v', '--ignore-config', ...args];
+        if (process.env.YTDLP_PROXY) {
+            fullArgs.unshift('--proxy', process.env.YTDLP_PROXY);
+        }
+        // If cookie file exists, add it automatically
+        if (fs.existsSync(cookieFilePath)) {
+            fullArgs.unshift('--cookies', cookieFilePath);
+        }
+
+        console.log('Spawning yt-dlp:', exe, fullArgs.join(' '));
+        const child = spawn(exe, fullArgs, { env: { ...process.env }, ...opts });
+
+        let stdout = '';
+        let stderr = '';
+
+        if (child.stdout) {
+            child.stdout.on('data', d => {
+                const s = d.toString();
+                stdout += s;
+                process.stdout.write('[yt-dlp stdout] ' + s);
+            });
+        }
+
+        if (child.stderr) {
+            child.stderr.on('data', d => {
+                const s = d.toString();
+                stderr += s;
+                process.stderr.write('[yt-dlp stderr] ' + s);
+            });
+        }
+
+        child.on('error', err => reject({ code: -1, error: err.message, stdout, stderr }));
+        child.on('close', code => {
+            if (code === 0) return resolve({ code, stdout, stderr });
+            return reject({ code, stdout, stderr });
+        });
+    });
+}
+
+// ---------- /api/info endpoint ----------
 app.post('/api/info', async (req, res) => {
     const videoUrl = req.body.url;
     if (!videoUrl) return res.status(400).json({ error: 'Missing URL' });
@@ -88,111 +142,85 @@ app.post('/api/info', async (req, res) => {
             '--dump-json',
             '--no-warnings',
             '--ignore-errors',
-            '--no-check-certificates',
+            '--no-check-certificate',
             ...getYoutubeHeaders(),
             videoUrl
         ];
 
-        const proc = spawn(ytDlpCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-        let data = '';
-        let errorOutput = '';
+        // Run and capture
+        const { stdout, stderr } = await spawnYtdlp(args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-        proc.stdout.on('data', (chunk) => {
-            data += chunk.toString();
-        });
+        // Parse JSON (some extractors may print multiple JSON objects; take first valid parse)
+        let info = null;
+        try {
+            // sometimes yt-dlp prints logs before JSON; find first "{" index
+            const firstBrace = stdout.indexOf('{');
+            const jsonText = firstBrace >= 0 ? stdout.slice(firstBrace) : stdout;
+            info = JSON.parse(jsonText);
+        } catch (parseErr) {
+            console.error('Failed to parse yt-dlp output as JSON:', parseErr.message);
+            console.error('Yt-dlp stderr tail:\n', tail(stderr, 80));
+            return res.status(500).json({ error: 'Failed to parse video info', details: tail(stderr, 80) });
+        }
 
-        proc.stderr.on('data', (chunk) => {
-            errorOutput += chunk.toString();
-        });
+        // Build format lists
+        const allFormats = info.formats || [];
+        const videoFormats = allFormats
+            .filter(f => f.vcodec && f.vcodec !== 'none')
+            .map(f => {
+                const sizeMB = f.filesize ? Math.round(f.filesize / (1024 * 1024)) : (f.filesize_approx ? Math.round(f.filesize_approx / (1024 * 1024)) : 0);
+                return {
+                    resolution: f.format_note || (f.height ? `${f.height}p` : 'Unknown'),
+                    codec: [f.vcodec, f.acodec].filter(Boolean).join('+'),
+                    container: f.ext,
+                    sizeMB,
+                    bitrate: f.tbr || 0,
+                    itag: f.format_id,
+                    hasAudio: f.acodec !== 'none'
+                };
+            }).sort((a, b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
 
-        proc.on('error', (err) => {
-            console.error('yt-dlp spawn error:', err);
-            return res.status(500).json({ error: 'Failed to start yt-dlp', details: err.message });
-        });
+        const audioFormats = allFormats
+            .filter(f => f.acodec && f.acodec !== 'none' && (!f.height || f.vcodec === 'none'))
+            .map(f => ({ itag: f.format_id, bitrate: f.tbr || 0, container: f.ext }))
+            .sort((a, b) => b.bitrate - a.bitrate);
 
-        proc.on('close', (code) => {
-            if (code !== 0) {
-                console.error('yt-dlp error:', errorOutput || `exit code ${code}`);
-                return res.status(500).json({ error: 'Failed to get video info', details: errorOutput || `exit code ${code}` });
-            }
+        let date = 'Unknown';
+        if (info.upload_date) {
+            date = formatDate(info.upload_date);
+        } else if (info.release_timestamp) {
+            date = new Date(info.release_timestamp * 1000).toLocaleDateString();
+        }
 
-            try {
-                const info = JSON.parse(data);
-
-                // Filter out formats with no size or invalid data
-                const videoFormats = (info.formats || [])
-                    .filter(f => f.vcodec !== 'none' && (f.filesize || f.filesize_approx))
-                    .map(f => {
-                        let sizeMB = 0;
-                        if (f.filesize) {
-                            sizeMB = Math.round(f.filesize / (1024 * 1024));
-                        } else if (f.filesize_approx) {
-                            sizeMB = Math.round(f.filesize_approx / (1024 * 1024));
-                        }
-
-                        return {
-                            resolution: f.format_note || (f.height ? `${f.height}p` : 'Unknown'),
-                            codec: [f.vcodec, f.acodec].filter(Boolean).join('+'),
-                            container: f.ext,
-                            sizeMB: sizeMB,
-                            bitrate: f.tbr || 0,
-                            itag: f.format_id,
-                            hasAudio: f.acodec !== 'none'
-                        };
-                    })
-                    .sort((a, b) => {
-                        const aRes = parseInt(a.resolution) || 0;
-                        const bRes = parseInt(b.resolution) || 0;
-                        return bRes - aRes;
-                    });
-
-                const audioFormats = (info.formats || [])
-                    .filter(f => f.acodec !== 'none' && f.vcodec === 'none' && (f.filesize || f.filesize_approx))
-                    .map(f => ({
-                        itag: f.format_id,
-                        bitrate: f.tbr || 0,
-                        container: f.ext
-                    }))
-                    .sort((a, b) => b.bitrate - a.bitrate);
-
-                let date = 'Unknown';
-                if (info.upload_date) {
-                    date = formatDate(info.upload_date);
-                } else if (info.release_timestamp) {
-                    date = new Date(info.release_timestamp * 1000).toLocaleDateString();
-                }
-
-                res.json({
-                    title: info.title || 'Untitled Video',
-                    thumbnail: info.thumbnail || 'https://via.placeholder.com/800x450',
-                    duration: formatDuration(info.duration || 0),
-                    views: formatViews(info.view_count || 0),
-                    date: date,
-                    formats: videoFormats,
-                    audioFormats: audioFormats,
-                    uploader: info.uploader || 'Unknown'
-                });
-            } catch (parseError) {
-                console.error('JSON parse error:', parseError);
-                res.status(500).json({ error: 'Failed to parse video info', details: parseError.message });
-            }
+        res.json({
+            title: info.title || 'Untitled Video',
+            thumbnail: info.thumbnail || '',
+            duration: formatDuration(info.duration || 0),
+            views: formatViews(info.view_count || 0),
+            date,
+            formats: videoFormats,
+            audioFormats,
+            uploader: info.uploader || 'Unknown'
         });
     } catch (err) {
-        console.error('Video info error:', err);
-        res.status(500).json({ error: 'Failed to get video info', details: err.message });
+        console.error('api/info error:', err);
+        const details = err.stderr ? tail(err.stderr, 120) : (err.error || err.message || 'Unknown');
+        res.status(500).json({ error: 'Failed to get video info', details });
     }
 });
 
-// SSE endpoint for progress updates
+// ---------- SSE progress endpoint ----------
 app.get('/api/download/progress', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+    res.flushHeaders && res.flushHeaders();
 
-    const progressHandler = (data) => {
-        res.write(`event: progress\n`);
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    const progressHandler = data => {
+        try {
+            res.write(`event: progress\n`);
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch (e) { /* ignore write errors */ }
     };
 
     progressEmitter.on('progress', progressHandler);
@@ -203,32 +231,25 @@ app.get('/api/download/progress', (req, res) => {
     });
 });
 
-// embedMetadata: downloads thumbnail if needed, then attaches it as cover art
+// ---------- embedMetadata helper ----------
 const embedMetadata = async (filePath, metadata) => {
     const tempPath = path.join(downloadsDir, `meta_temp_${path.basename(filePath)}`);
     let thumbPath = null;
 
-    // helper to download thumbnail
     async function downloadToFile(url, dest) {
-        const response = await axios.get(url, { 
-            responseType: 'stream', 
+        const response = await axios.get(url, {
+            responseType: 'stream',
             timeout: 15000,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'Referer': 'https://www.youtube.com/',
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'Origin': 'https://www.youtube.com'
+                'Accept': '*/*'
             }
         });
         await pipeline(response.data, fs.createWriteStream(dest));
     }
 
     try {
-        // Only fetch thumbnail if it's a URL
         if (metadata && metadata.thumbnail && /^https?:\/\//i.test(metadata.thumbnail)) {
             thumbPath = path.join(downloadsDir, `thumb_${uuidv4()}.jpg`);
             try {
@@ -238,15 +259,14 @@ const embedMetadata = async (filePath, metadata) => {
                 thumbPath = null;
             }
         } else if (metadata && metadata.thumbnail && fs.existsSync(metadata.thumbnail)) {
-            // If thumbnail is already a local file path
             thumbPath = metadata.thumbnail;
         }
 
-        // Build ffmpeg args
         let args;
         if (thumbPath) {
-            // Use two inputs: 0 = original, 1 = thumbnail
+            // attach cover art
             args = [
+                '-y',
                 '-i', filePath,
                 '-i', thumbPath,
                 '-map', '0',
@@ -259,8 +279,8 @@ const embedMetadata = async (filePath, metadata) => {
                 tempPath
             ];
         } else {
-            // No thumbnail — just write metadata
             args = [
+                '-y',
                 '-i', filePath,
                 '-c', 'copy',
                 '-metadata', `title=${metadata.title || ''}`,
@@ -270,39 +290,32 @@ const embedMetadata = async (filePath, metadata) => {
             ];
         }
 
-        // Run ffmpeg and capture stderr (for debugging)
+        // run ffmpeg
         await new Promise((resolve, reject) => {
-            const ff = spawn(ffmpegCommand, args);
+            const ff = spawn(ffmpegCommand, args, { env: { ...process.env } });
             let stderr = '';
-
-            ff.stderr.on('data', (d) => { stderr += d.toString(); });
-            ff.on('error', (err) => reject(err));
-            ff.on('close', (code) => {
+            ff.stderr.on('data', d => stderr += d.toString());
+            ff.on('error', err => reject(err));
+            ff.on('close', code => {
                 if (code === 0) {
                     try {
-                        // replace original file with temp
                         fs.renameSync(tempPath, filePath);
-                        // cleanup thumbnail (only if we created it)
                         if (thumbPath && thumbPath.includes('thumb_') && fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
                     } catch (e) {
-                        console.warn('embedMetadata: cleanup or rename error:', e);
+                        console.warn('embedMetadata cleanup error:', e.message);
                     }
                     resolve();
                 } else {
-                    // include stderr in error for easier debugging
-                    const msg = `FFmpeg exited with code ${code}. Stderr: ${stderr}`;
-                    reject(new Error(msg));
+                    reject(new Error(`FFmpeg exited with code ${code}. Stderr: ${tail(stderr, 200)}`));
                 }
             });
         });
-
     } catch (err) {
-        // rethrow so caller knows embedding failed
         throw err;
     }
 };
 
-// Download endpoint with metadata embedding
+// ---------- /api/download endpoint ----------
 app.post('/api/download', async (req, res) => {
     const { url, videoItag, audioItag } = req.body;
     if (!url) return res.status(400).json({ error: 'Missing URL' });
@@ -311,12 +324,11 @@ app.post('/api/download', async (req, res) => {
     const baseOutput = path.join(downloadsDir, id);
     const finalFilePath = `${baseOutput}.mp4`;
 
-    // Build arguments
+    // Build yt-dlp args
     let args = [
         '--no-warnings',
         '--ignore-errors',
-        '--no-check-certificates',
-        '--console-title',
+        '--no-check-certificate',
         '--newline',
         '--progress',
         '--ffmpeg-location', binDir,
@@ -326,199 +338,157 @@ app.post('/api/download', async (req, res) => {
         url
     ];
 
-    if (videoItag && audioItag) {
-        args.push('-f', `${videoItag}+${audioItag}`);
-    } else if (videoItag) {
-        args.push('-f', `${videoItag}`);
-    } else {
-        args.push('-f', 'bestvideo+bestaudio');
-    }
+    if (videoItag && audioItag) args.push('-f', `${videoItag}+${audioItag}`);
+    else if (videoItag) args.push('-f', `${videoItag}`);
+    else args.push('-f', 'bestvideo+bestaudio');
 
     args.push('--merge-output-format', 'mp4', '--postprocessor-args', '-c:v copy -c:a aac -b:a 192k');
 
-    const filteredArgs = args.filter(arg => arg !== undefined && arg !== null && String(arg).trim() !== '');
+    // Filter undefined
+    const filteredArgs = args.filter(a => a !== undefined && a !== null && String(a).trim() !== '');
 
-    console.log('Starting download with args:', filteredArgs);
+    console.log('Starting download', { id, args: filteredArgs.slice(0, 8).concat(['...']) });
 
-    // Retry mechanism
-    const maxRetries = 3;
-    let retryCount = 0;
-    let downloadSuccess = false;
+    // retry logic
+    const maxRetries = 2;
+    let attempt = 0;
+    let ok = false;
+    let lastError = null;
 
-    const attemptDownload = () => {
-        return new Promise((resolve, reject) => {
-            const proc = spawn(ytDlpCommand, filteredArgs, {
-                stdio: ['ignore', 'pipe', 'pipe']
-            });
+    const attemptDownload = () => new Promise((resolve, reject) => {
+        attempt++;
+        const exe = fs.existsSync(ytDlpCommand) ? ytDlpCommand : 'yt-dlp';
+        const child = spawn(exe, ['-v', '--ignore-config', ...filteredArgs], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
 
-            // Progress regex
-            const progressRegex = /(\d+(?:\.\d+)?)%/;
+        let stdout = '';
+        let stderr = '';
+        const progressRegex = /(\d+(?:\.\d+)?)%/;
 
-            proc.stdout.on('data', (chunk) => {
-                const text = chunk.toString();
-                console.log('[yt-dlp stdout]', text.trim());
-
-                const progressMatch = text.match(progressRegex);
-                if (progressMatch) {
-                    const progress = parseFloat(progressMatch[1]);
-                    progressEmitter.emit('progress', { progress });
-                }
-
-                if (text.includes('Destination:') || text.includes('[download] Destination:')) {
-                    progressEmitter.emit('progress', { status: 'Downloading...' });
-                }
-
-                if (text.includes('100%')) {
-                    progressEmitter.emit('progress', { progress: 100, status: 'Finalizing...' });
-                }
-            });
-
-            proc.stderr.on('data', (chunk) => {
-                const text = chunk.toString();
-                console.error('[yt-dlp stderr]', text.trim());
-
-                const progressMatch = text.match(progressRegex);
-                if (progressMatch) {
-                    const progress = parseFloat(progressMatch[1]);
-                    progressEmitter.emit('progress', { progress });
-                }
-            });
-
-            const killTimeout = setTimeout(() => {
-                try { proc.kill(); } catch (e) { /* ignore */ }
-                progressEmitter.emit('progress', { error: 'Download timed out' });
-                reject(new Error('Download timed out'));
-            }, 1000 * 60 * 15); // 15 minutes
-
-            proc.on('close', (code) => {
-                clearTimeout(killTimeout);
-                console.log(`Download process closed with code ${code}`);
-
-                if (code !== 0) {
-                    progressEmitter.emit('progress', {
-                        error: 'Download failed',
-                        details: `Exit code: ${code}`
-                    });
-                    reject(new Error(`Download failed with code ${code}`));
-                    return;
-                }
-
-                if (!fs.existsSync(finalFilePath)) {
-                    progressEmitter.emit('progress', { error: 'File not created' });
-                    reject(new Error('File not created'));
-                    return;
-                }
-
-                resolve();
-            });
-
-            proc.on('error', (err) => {
-                clearTimeout(killTimeout);
-                console.error('Download process error:', err);
-                progressEmitter.emit('progress', { error: 'Failed to start download' });
-                reject(err);
-            });
+        child.stdout.on('data', chunk => {
+            const text = chunk.toString();
+            stdout += text;
+            process.stdout.write('[yt-dlp stdout] ' + text);
+            const m = text.match(progressRegex);
+            if (m) progressEmitter.emit('progress', { progress: parseFloat(m[1]) });
+            if (text.includes('Destination:')) progressEmitter.emit('progress', { status: 'Downloading...' });
+            if (text.includes('100%')) progressEmitter.emit('progress', { progress: 100, status: 'Finalizing...' });
         });
-    };
 
-    while (retryCount < maxRetries && !downloadSuccess) {
-        try {
-            await attemptDownload();
-            downloadSuccess = true;
-        } catch (err) {
-            retryCount++;
-            console.error(`Download attempt ${retryCount} failed:`, err.message);
-            progressEmitter.emit('progress', { 
-                status: `Retrying download... (${retryCount}/${maxRetries})`,
-                progress: 0
-            });
-            
-            if (retryCount < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, 3000));
-            } else {
-                return res.status(500).json({ error: 'Download failed after retries', details: err.message });
+        child.stderr.on('data', chunk => {
+            const text = chunk.toString();
+            stderr += text;
+            process.stderr.write('[yt-dlp stderr] ' + text);
+            const m = text.match(progressRegex);
+            if (m) progressEmitter.emit('progress', { progress: parseFloat(m[1]) });
+        });
+
+        const killTimeout = setTimeout(() => {
+            try { child.kill('SIGKILL'); } catch (e) {}
+            progressEmitter.emit('progress', { error: 'Download timed out' });
+            reject(new Error('Download timed out'));
+        }, 1000 * 60 * 15); // 15 minutes
+
+        child.on('error', err => {
+            clearTimeout(killTimeout);
+            reject(err);
+        });
+
+        child.on('close', code => {
+            clearTimeout(killTimeout);
+            if (code !== 0) {
+                lastError = { code, stdout, stderr };
+                progressEmitter.emit('progress', { error: 'Download failed', details: `Attempt ${attempt} exit ${code}` });
+                return reject(new Error(`yt-dlp exit ${code}`));
             }
+
+            // Find the created file (could be .mp4 or other ext before merge)
+            // We expect merged mp4 exists
+            if (!fs.existsSync(finalFilePath)) {
+                lastError = { code: 0, stdout, stderr };
+                progressEmitter.emit('progress', { error: 'File not created', details: 'Expected final mp4 not found' });
+                return reject(new Error('File not created'));
+            }
+
+            resolve({ stdout, stderr });
+        });
+    });
+
+    while (attempt <= maxRetries && !ok) {
+        try {
+            const result = await attemptDownload();
+            ok = true;
+            console.log('Download succeeded for', id);
+        } catch (err) {
+            console.error(`Attempt ${attempt} failed:`, err.message);
+            if (attempt >= maxRetries) {
+                const details = lastError && lastError.stderr ? tail(lastError.stderr, 200) : (err.stderr ? tail(err.stderr, 200) : err.message);
+                return res.status(500).json({ error: 'Download failed after retries', details });
+            }
+            // small backoff
+            await new Promise(r => setTimeout(r, 2000));
         }
     }
 
+    // Try to embed metadata
     try {
-        // Embed metadata
-        const videoInfo = await new Promise((resolve, reject) => {
-            // We need to refetch the video info for metadata
-            fetchVideoInfo(url)
-                .then(info => resolve(info))
-                .catch(err => reject(err));
-        });
-
+        const videoInfo = await fetchVideoInfo(url);
         await embedMetadata(finalFilePath, {
             title: videoInfo.title,
             artist: videoInfo.uploader,
             thumbnail: videoInfo.thumbnail
         });
     } catch (metaErr) {
-        console.warn('Metadata embedding failed:', metaErr);
+        console.warn('Metadata embedding failed:', metaErr.message || metaErr);
     }
 
-    // Clean up temporary files
-    const files = fs.readdirSync(downloadsDir);
-    files.forEach(file => {
-        if (file.startsWith(id) && !file.endsWith('.mp4')) {
-            try {
-                fs.unlinkSync(path.join(downloadsDir, file));
-            } catch (cleanupErr) {
-                console.warn('Failed to clean up temp file:', cleanupErr);
+    // clean up auxiliary files that start with id but are not .mp4
+    try {
+        const files = fs.readdirSync(downloadsDir);
+        files.forEach(file => {
+            if (file.startsWith(id) && !file.endsWith('.mp4')) {
+                try { fs.unlinkSync(path.join(downloadsDir, file)); } catch (e) { /* ignore */ }
             }
-        }
-    });
+        });
+    } catch (e) {
+        console.warn('Cleanup error:', e.message);
+    }
 
     progressEmitter.emit('progress', { complete: true, file: `${id}.mp4` });
     res.json({ success: true, file: `${id}.mp4` });
 });
 
-// Helper to fetch video info for metadata
+// ---------- fetchVideoInfo helper ----------
 async function fetchVideoInfo(url) {
-    return new Promise((resolve, reject) => {
-        const args = [
-            '--dump-json',
-            '--no-warnings',
-            '--ignore-errors',
-            '--no-check-certificates',
-            ...getYoutubeHeaders(),
-            url
-        ];
-
-        const proc = spawn(ytDlpCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-        let data = '';
-        let errorOutput = '';
-
-        proc.stdout.on('data', (chunk) => {
-            data += chunk.toString();
-        });
-
-        proc.stderr.on('data', (chunk) => {
-            errorOutput += chunk.toString();
-        });
-
-        proc.on('close', (code) => {
-            if (code !== 0) {
-                return reject(new Error(errorOutput || `exit code ${code}`));
-            }
-
+    return new Promise(async (resolve, reject) => {
+        try {
+            const args = [
+                '--dump-json',
+                '--no-warnings',
+                '--ignore-errors',
+                '--no-check-certificate',
+                ...getYoutubeHeaders(),
+                url
+            ];
+            const { stdout, stderr } = await spawnYtdlp(args, { stdio: ['ignore', 'pipe', 'pipe'] });
             try {
-                const info = JSON.parse(data);
+                const firstBrace = stdout.indexOf('{');
+                const jsonText = firstBrace >= 0 ? stdout.slice(firstBrace) : stdout;
+                const info = JSON.parse(jsonText);
                 resolve({
                     title: info.title || 'Untitled Video',
                     uploader: info.uploader || 'Unknown',
                     thumbnail: info.thumbnail || ''
                 });
-            } catch (parseError) {
-                reject(parseError);
+            } catch (parseErr) {
+                reject(new Error('Failed to parse yt-dlp JSON: ' + tail(stderr, 120)));
             }
-        });
+        } catch (err) {
+            reject(err);
+        }
     });
 }
 
-// Helper functions
+// ---------- helpers ----------
 function formatDuration(seconds) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -536,30 +506,24 @@ function formatViews(views) {
 
 function formatDate(dateStr) {
     if (!dateStr) return 'Unknown';
-
     try {
         if (/^\d{8}$/.test(dateStr)) {
             const year = dateStr.substring(0, 4);
             const month = dateStr.substring(4, 6);
             const day = dateStr.substring(6, 8);
             return new Date(`${year}-${month}-${day}`).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
+                year: 'numeric', month: 'short', day: 'numeric'
             });
         }
-
         return new Date(dateStr).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
+            year: 'numeric', month: 'short', day: 'numeric'
         });
     } catch (e) {
         return 'Unknown';
     }
 }
 
-// Serve static files
+// Serve static UI and downloads
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/downloads', express.static(downloadsDir, {
     setHeaders: (res, filePath) => {
@@ -567,6 +531,24 @@ app.use('/downloads', express.static(downloadsDir, {
     }
 }));
 
-app.listen(PORT, () => {
-    console.log(`✅ Server running on http://localhost:${PORT}`);
+// Basic health endpoint
+app.get('/api/probe', (req, res) => {
+    res.json({
+        yt_dlp: { path: ytDlpCommand, exists: fs.existsSync(ytDlpCommand) },
+        ffmpeg: { path: ffmpegCommand, exists: fs.existsSync(path.join(binDir, 'ffmpeg')) },
+        cookie_file: { path: cookieFilePath, exists: fs.existsSync(cookieFilePath) }
+    });
 });
+
+// Global error handlers
+process.on('uncaughtException', (err) => {
+    console.error('uncaughtException:', err);
+});
+process.on('unhandledRejection', (err) => {
+    console.error('unhandledRejection:', err);
+});
+
+app.listen(PORT, () => {
+    console.log(`✅ Server running on http://localhost:${PORT} (port ${PORT})`);
+});
+
