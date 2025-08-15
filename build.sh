@@ -8,11 +8,11 @@ echo "Installing yt-dlp..."
 curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o bin/yt-dlp
 chmod a+rx bin/yt-dlp
 
-# Install ffmpeg (fixed URL)
+# Install ffmpeg from reliable source
 echo "Installing ffmpeg..."
-curl -L -o ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2024-08-26-14-00/ffmpeg-N-115001-g0d00e1c3a1-linux64-gpl.tar.xz"
+curl -L -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
 tar -xf ffmpeg.tar.xz
-find . -type d -name "ffmpeg-*" -exec mv {}/ffmpeg bin/ \;
+find . -name ffmpeg -exec mv {} bin/ \;
 chmod a+rx bin/ffmpeg
 
 # Cleanup
