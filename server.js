@@ -28,6 +28,34 @@ const progressEmitter = new EventEmitter();
 const ffmpegCommand = path.join(binDir, 'ffmpeg');
 const ytDlpCommand = path.join(binDir, 'yt-dlp');
 
+// Rotating proxy list
+const proxies = [
+    'https://proxy1.scrapeops.io:5353',
+    'https://proxy2.scrapeops.io:5353',
+    'https://proxy3.scrapeops.io:5353',
+    'https://proxy4.scrapeops.io:5353',
+    'https://proxy5.scrapeops.io:5353'
+];
+
+function getRandomProxy() {
+    return proxies[Math.floor(Math.random() * proxies.length)];
+}
+
+// Enhanced YouTube headers with proxy rotation
+function getYoutubeHeaders() {
+    return [
+        '--proxy', getRandomProxy(),
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        '--referer', 'https://www.youtube.com/',
+        '--add-header', 'Accept: */*',
+        '--add-header', 'Accept-Language: en-US,en;q=0.9',
+        '--add-header', 'Sec-Fetch-Dest: empty',
+        '--add-header', 'Sec-Fetch-Mode: cors',
+        '--add-header', 'Sec-Fetch-Site: same-origin',
+        '--add-header', 'Origin: https://www.youtube.com'
+    ];
+}
+
 // Startup checks
 async function checkCmdVersion(cmd, args = ['--version']) {
     try {
@@ -64,19 +92,6 @@ async function init() {
 
 init();
 
-// Enhanced YouTube headers
-const youtubeHeaders = [
-    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    '--referer', 'https://www.youtube.com/',
-    '--cookies', 'from-browser',
-    '--add-header', 'Accept: */*',
-    '--add-header', 'Accept-Language: en-US,en;q=0.9',
-    '--add-header', 'Sec-Fetch-Dest: empty',
-    '--add-header', 'Sec-Fetch-Mode: cors',
-    '--add-header', 'Sec-Fetch-Site: same-origin',
-    '--add-header', 'Origin: https://www.youtube.com'
-];
-
 // Get video info endpoint
 app.post('/api/info', async (req, res) => {
     const videoUrl = req.body.url;
@@ -88,7 +103,7 @@ app.post('/api/info', async (req, res) => {
             '--no-warnings',
             '--ignore-errors',
             '--no-check-certificates',
-            ...youtubeHeaders,
+            ...getYoutubeHeaders(),
             videoUrl
         ];
 
@@ -209,7 +224,20 @@ const embedMetadata = async (filePath, metadata) => {
 
     // helper to download thumbnail
     async function downloadToFile(url, dest) {
-        const response = await axios.get(url, { responseType: 'stream', timeout: 15000 });
+        const response = await axios.get(url, { 
+            responseType: 'stream', 
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'Referer': 'https://www.youtube.com/',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin',
+                'Origin': 'https://www.youtube.com'
+            }
+        });
         await pipeline(response.data, fs.createWriteStream(dest));
     }
 
@@ -306,7 +334,7 @@ app.post('/api/download', async (req, res) => {
         '--newline',
         '--progress',
         '--ffmpeg-location', binDir,
-        ...youtubeHeaders,
+        ...getYoutubeHeaders(),
         '--no-playlist',
         '-o', `${baseOutput}.%(ext)s`,
         url
@@ -469,7 +497,7 @@ async function fetchVideoInfo(url) {
             '--no-warnings',
             '--ignore-errors',
             '--no-check-certificates',
-            ...youtubeHeaders,
+            ...getYoutubeHeaders(),
             url
         ];
 
