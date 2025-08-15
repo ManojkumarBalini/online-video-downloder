@@ -28,23 +28,9 @@ const progressEmitter = new EventEmitter();
 const ffmpegCommand = path.join(binDir, 'ffmpeg');
 const ytDlpCommand = path.join(binDir, 'yt-dlp');
 
-// Rotating proxy list
-const proxies = [
-    'https://proxy1.scrapeops.io:5353',
-    'https://proxy2.scrapeops.io:5353',
-    'https://proxy3.scrapeops.io:5353',
-    'https://proxy4.scrapeops.io:5353',
-    'https://proxy5.scrapeops.io:5353'
-];
-
-function getRandomProxy() {
-    return proxies[Math.floor(Math.random() * proxies.length)];
-}
-
-// Enhanced YouTube headers with proxy rotation
+// Enhanced YouTube headers
 function getYoutubeHeaders() {
     return [
-        '--proxy', getRandomProxy(),
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         '--referer', 'https://www.youtube.com/',
         '--add-header', 'Accept: */*',
