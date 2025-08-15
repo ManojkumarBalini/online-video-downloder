@@ -1,5 +1,20 @@
-#!/usr/bin/env bash
-sudo apt-get update
-sudo apt-get install -y ffmpeg
-sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-sudo chmod a+rx /usr/local/bin/yt-dlp
+#!/bin/bash
+
+# Create bin directory
+mkdir -p bin
+
+# Install yt-dlp
+curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o bin/yt-dlp
+chmod a+rx bin/yt-dlp
+
+# Install ffmpeg
+curl -L -o ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+tar -xf ffmpeg.tar.xz
+find . -type f -name ffmpeg -exec mv {} bin/ \;
+chmod a+rx bin/ffmpeg
+
+# Cleanup
+rm -rf ffmpeg-master-latest-linux64-gpl ffmpeg.tar.xz
+
+echo "Binaries installed:"
+ls -lh bin/
