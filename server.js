@@ -22,15 +22,14 @@ if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir);
 
 const progressEmitter = new EventEmitter();
 
-// FFmpeg path configuration
-const ffmpegPath = 'C:\\ffmpeg\\bin\\ffmpeg.exe';
-process.env.PATH = `${process.env.PATH};${path.dirname(ffmpegPath)}`;
+// Use system-installed binaries
+const ffmpegCommand = 'ffmpeg';
+const ytDlpCommand = 'yt-dlp';
 
 // Startup checks
 async function checkCmdVersion(cmd, args = ['--version']) {
     try {
-        const safeCmd = /\s/.test(cmd) ? `"${cmd}"` : cmd;
-        const { stdout, stderr } = await promisifiedExec(`${safeCmd} ${args.join(' ')}`);
+        const { stdout, stderr } = await promisifiedExec(`${cmd} ${args.join(' ')}`);
         if (stderr) return { ok: true, version: stderr.split('\n')[0] || '' };
         return { ok: true, version: stdout.split('\n')[0] || '' };
     } catch (e) {
@@ -39,8 +38,8 @@ async function checkCmdVersion(cmd, args = ['--version']) {
 }
 
 async function init() {
-    const ytCheck = await checkCmdVersion('yt-dlp', ['--version']);
-    const ffCheck = await checkCmdVersion(ffmpegPath, ['-version']);
+    const ytCheck = await checkCmdVersion(ytDlpCommand);
+    const ffCheck = await checkCmdVersion(ffmpegCommand);
 
     console.log('yt-dlp:', ytCheck);
     console.log('ffmpeg:', ffCheck);
@@ -65,7 +64,7 @@ app.post('/api/info', async (req, res) => {
             videoUrl
         ];
 
-        const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        const proc = spawn(ytDlpCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
         let data = '';
         let errorOutput = '';
 
@@ -231,7 +230,7 @@ const embedMetadata = async (filePath, metadata) => {
 
         // Run ffmpeg and capture stderr (for debugging)
         await new Promise((resolve, reject) => {
-            const ff = spawn(ffmpegPath, args);
+            const ff = spawn(ffmpegCommand, args);
             let stderr = '';
 
             ff.stderr.on('data', (d) => { stderr += d.toString(); });
@@ -270,10 +269,6 @@ app.post('/api/download', async (req, res) => {
     const baseOutput = path.join(downloadsDir, id);
     const finalFilePath = `${baseOutput}.mp4`;
 
-    const ffmpegDir = os.platform() === 'win32'
-        ? path.dirname(ffmpegPath).replace(/\\/g, '/')
-        : path.dirname(ffmpegPath);
-
     // Build arguments
     let args = [
         '--no-warnings',
@@ -282,7 +277,7 @@ app.post('/api/download', async (req, res) => {
         '--console-title',
         '--newline',
         '--progress',
-        '--ffmpeg-location', ffmpegDir,
+        '--ffmpeg-location', '/usr/bin',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         '--no-playlist',
         '-o', `${baseOutput}.%(ext)s`,
@@ -310,7 +305,7 @@ app.post('/api/download', async (req, res) => {
 
     const attemptDownload = () => {
         return new Promise((resolve, reject) => {
-            const proc = spawn('yt-dlp', filteredArgs, {
+            const proc = spawn(ytDlpCommand, filteredArgs, {
                 stdio: ['ignore', 'pipe', 'pipe']
             });
 
@@ -449,7 +444,7 @@ async function fetchVideoInfo(url) {
             url
         ];
 
-        const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        const proc = spawn(ytDlpCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
         let data = '';
         let errorOutput = '';
 
