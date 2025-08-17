@@ -25,17 +25,7 @@ const progressEmitter = new EventEmitter();
 
 const localYtDlp = path.join(binDir, 'yt-dlp');
 const localFfmpeg = path.join(binDir, 'ffmpeg');
-const cookieFilePath = path.join(binDir, 'cookies.txt');
-
-// If YTDLP_COOKIES env provided (string content), write to cookie file (secure)
-if (process.env.YTDLP_COOKIES && !fs.existsSync(cookieFilePath)) {
-  try {
-    fs.writeFileSync(cookieFilePath, process.env.YTDLP_COOKIES, { mode: 0o600 });
-    console.log('Wrote cookies file to', cookieFilePath);
-  } catch (e) {
-    console.warn('Failed to write cookies file from YTDLP_COOKIES env:', e.message);
-  }
-}
+const cookieFilePath = fs.existsSync("/etc/secrets/cookies.txt") ? "/etc/secrets/cookies.txt" : path.join(binDir, 'cookies.txt');
 
 function getYoutubeHeaders() {
   return [
@@ -82,13 +72,10 @@ function runYtDlpWithArgs(extraArgs = [], opts = {}) {
     if (fs.existsSync(cookieFilePath)) {
       args.unshift('--cookies', cookieFilePath);
     }
-
     console.log('Spawning yt-dlp:', exe, args.join(' '));
     const child = spawn(exe, args, { env: { ...process.env }, ...opts });
-
     let stdout = '';
     let stderr = '';
-
     if (child.stdout) {
       child.stdout.on('data', d => {
         const s = d.toString();
@@ -103,7 +90,6 @@ function runYtDlpWithArgs(extraArgs = [], opts = {}) {
         process.stderr.write('[yt-dlp stderr] ' + s);
       });
     }
-
     child.on('error', err => reject({ code: -1, error: err.message, stdout, stderr }));
     child.on('close', code => {
       if (code === 0) return resolve({ code, stdout, stderr });
@@ -119,7 +105,6 @@ async function progressiveYtdlp(actionArgs) {
     { label: 'extractor_args_missing_pot', args: ['--extractor-args', 'youtube:formats=missing_pot,player_client=android', ...actionArgs] },
     { label: 'final_allow_with_cookies', args: ['--allow-unplayable-formats', '--geo-bypass', ...actionArgs] }
   ];
-
   const errors = [];
   for (const at of attempts) {
     try {
@@ -148,20 +133,16 @@ async function progressiveYtdlp(actionArgs) {
   throw err;
 }
 
-// New endpoint to check format availability
 app.post('/api/check-format', async (req, res) => {
   const { url, videoItag, audioItag } = req.body;
   if (!url) return res.status(400).json({ error: 'Missing URL' });
-
   try {
     const info = await fetchVideoInfo(url);
     const formatExists = info.formats.some(f => f.itag === videoItag) &&
                          (!audioItag || info.audioFormats.some(a => a.itag === audioItag));
-    
     if (!formatExists) {
       return res.status(404).json({ error: 'Requested format not available' });
     }
-    
     res.json({ available: true });
   } catch (err) {
     res.status(500).json({ error: 'Could not verify format availability', details: err.message });
@@ -171,7 +152,6 @@ app.post('/api/check-format', async (req, res) => {
 app.post('/api/info', async (req, res) => {
   const url = req.body.url;
   if (!url) return res.status(400).json({ error: 'Missing URL' });
-
   const baseArgs = [
     '--dump-json',
     '--no-warnings',
@@ -180,14 +160,12 @@ app.post('/api/info', async (req, res) => {
     ...getYoutubeHeaders(),
     url
   ];
-
   try {
     const { result } = await progressiveYtdlp(baseArgs);
     try {
       const firstBrace = result.stdout.indexOf('{');
       const jsonText = firstBrace >= 0 ? result.stdout.slice(firstBrace) : result.stdout;
       const info = JSON.parse(jsonText);
-
       const allFormats = info.formats || [];
       const videoFormats = allFormats.filter(f => f.vcodec && f.vcodec !== 'none').map(f => {
         const sizeMB = f.filesize ? Math.round(f.filesize / (1024 * 1024)) : (f.filesize_approx ? Math.round(f.filesize_approx / (1024 * 1024)) : 0);
@@ -201,17 +179,14 @@ app.post('/api/info', async (req, res) => {
           hasAudio: f.acodec !== 'none' 
         };
       }).sort((a,b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
-
       const audioFormats = allFormats.filter(f => f.acodec && f.acodec !== 'none' && (!f.height || f.vcodec === 'none')).map(f => ({ 
         itag: f.format_id, 
         bitrate: f.tbr || 0, 
         container: f.ext 
       })).sort((a,b) => b.bitrate - a.bitrate);
-
       let date = 'Unknown';
       if (info.upload_date) date = formatDate(info.upload_date);
       else if (info.release_timestamp) date = new Date(info.release_timestamp * 1000).toLocaleDateString();
-
       return res.json({
         title: info.title || 'Untitled Video',
         thumbnail: info.thumbnail || '',
@@ -237,7 +212,6 @@ app.get('/api/download/progress', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders && res.flushHeaders();
-
   const progressHandler = data => {
     try { res.write(`event: progress\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
   };
@@ -251,23 +225,19 @@ app.get('/api/download/progress', (req, res) => {
 const embedMetadata = async (filePath, metadata) => {
   const tempPath = path.join(downloadsDir, `meta_temp_${path.basename(filePath)}`);
   let thumbPath = null;
-  
   async function downloadToFile(url, dest) {
     const response = await axios.get(url, { responseType: 'stream', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.youtube.com/' } });
     await pipeline(response.data, fs.createWriteStream(dest));
   }
-
   try {
     if (metadata?.thumbnail?.startsWith('http')) {
       thumbPath = path.join(downloadsDir, `thumb_${uuidv4()}.jpg`);
       try { await downloadToFile(metadata.thumbnail, thumbPath); } catch (e) { console.warn('Thumb download failed:', e.message); }
     }
-
     const ffExe = fs.existsSync(localFfmpeg) ? localFfmpeg : 'ffmpeg';
     const args = ['-y', '-i', filePath];
     if (thumbPath) args.push('-i', thumbPath, '-map', '0', '-map', '1', '-c', 'copy', '-disposition:v:1', 'attached_pic');
     args.push('-metadata', `title=${metadata.title||''}`, '-metadata', `artist=${metadata.artist||''}`, '-metadata', 'comment=Downloaded with Online Downloader', tempPath);
-
     await new Promise((resolve, reject) => {
       const ff = spawn(ffExe, args, { env: { ...process.env } });
       let stderr = '';
@@ -291,15 +261,12 @@ const embedMetadata = async (filePath, metadata) => {
 app.post('/api/download', async (req, res) => {
   const { url, videoItag, audioItag } = req.body;
   if (!url) return res.status(400).json({ error: 'Missing URL' });
-
   const id = uuidv4();
   const baseOutput = path.join(downloadsDir, id);
   const finalFilePath = `${baseOutput}.mp4`;
-
   let formatOption = 'bestvideo+bestaudio/best';
   if (videoItag && audioItag) formatOption = `${videoItag}+${audioItag}`;
   else if (videoItag) formatOption = `${videoItag}`;
-
   const args = [
     '--no-warnings', '--ignore-errors', '--no-check-certificate', '--newline', '--progress',
     '--ffmpeg-location', binDir, ...getYoutubeHeaders(), '--no-playlist',
@@ -308,14 +275,12 @@ app.post('/api/download', async (req, res) => {
     '--merge-output-format', 'mp4',
     '--postprocessor-args', '-c:v copy -c:a aac -b:a 192k'
   ];
-
   const attemptLabels = [
     { label: 'base', args },
     { label: 'geo_allow', args: ['--geo-bypass','--allow-unplayable-formats', ...args] },
     { label: 'extractor_args_missing_pot', args: ['--extractor-args','youtube:formats=missing_pot,player_client=android', ...args] },
     { label: 'final_allow_with_cookies', args: ['--allow-unplayable-formats','--geo-bypass', ...args] }
   ];
-
   let lastErr = null;
   for (const at of attemptLabels) {
     try {
@@ -323,14 +288,11 @@ app.post('/api/download', async (req, res) => {
       const spawnArgs = ['-v','--ignore-config', ...at.args];
       if (process.env.YTDLP_PROXY) spawnArgs.unshift('--proxy', process.env.YTDLP_PROXY);
       if (fs.existsSync(cookieFilePath)) spawnArgs.unshift('--cookies', cookieFilePath);
-
       console.log('Spawning yt-dlp for download attempt', at.label, exe, spawnArgs.slice(0, 12).join(' ') + ' ...');
       const child = spawn(exe, spawnArgs, { stdio: ['ignore','pipe','pipe'], env: { ...process.env } });
-
       let stdout = '';
       let stderr = '';
       const progressRegex = /(\d+(?:\.\d+)?)%/;
-
       child.stdout.on('data', chunk => {
         const t = chunk.toString();
         stdout += t;
@@ -340,7 +302,6 @@ app.post('/api/download', async (req, res) => {
         if (t.includes('Destination:')) progressEmitter.emit('progress', { status: 'Downloading...' });
         if (t.includes('100%')) progressEmitter.emit('progress', { progress: 100, status: 'Finalizing...' });
       });
-
       child.stderr.on('data', chunk => {
         const t = chunk.toString();
         stderr += t;
@@ -348,16 +309,13 @@ app.post('/api/download', async (req, res) => {
         const m = t.match(progressRegex);
         if (m) progressEmitter.emit('progress', { progress: parseFloat(m[1]) });
       });
-
       const killTimeout = setTimeout(() => {
         try { child.kill('SIGKILL'); } catch (e) {}
       }, 1000 * 60 * 15);
-
       const result = await new Promise((resolve, reject) => {
         child.on('error', e => { clearTimeout(killTimeout); reject(e); });
         child.on('close', code => { clearTimeout(killTimeout); resolve({ code, stdout, stderr }); });
       });
-
       if (result.code !== 0) {
         lastErr = result;
         const combined = (result.stderr || '') + (result.stdout || '');
@@ -366,19 +324,16 @@ app.post('/api/download', async (req, res) => {
         }
         continue;
       }
-
       if (!fs.existsSync(finalFilePath)) {
         lastErr = result;
         continue;
       }
-
       try {
         const info = await fetchVideoInfo(url);
         await embedMetadata(finalFilePath, { title: info.title, artist: info.uploader, thumbnail: info.thumbnail });
       } catch (metaErr) {
         console.warn('Metadata embed failed:', metaErr.message);
       }
-
       try {
         const files = fs.readdirSync(downloadsDir);
         files.forEach(f => { 
@@ -387,7 +342,6 @@ app.post('/api/download', async (req, res) => {
           }
         });
       } catch (e) {}
-
       progressEmitter.emit('progress', { complete: true, file: `${id}.mp4` });
       return res.json({ success: true, file: `${id}.mp4` });
     } catch (err) {
@@ -395,7 +349,6 @@ app.post('/api/download', async (req, res) => {
       console.error(`Download attempt ${at.label} error:`, err.message || err);
     }
   }
-
   const details = (lastErr && lastErr.stderr) ? tail(lastErr.stderr, 400) : (lastErr && lastErr.details) ? lastErr.details : JSON.stringify(lastErr);
   return res.status(500).json({ error: 'Download failed after fallback attempts', details });
 });
