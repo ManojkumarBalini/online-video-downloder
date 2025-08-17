@@ -27,10 +27,14 @@ const localYtDlp = path.join(binDir, 'yt-dlp');
 const localFfmpeg = path.join(binDir, 'ffmpeg');
 const cookieFilePath = path.join(binDir, 'cookies.txt');
 
+// If YTDLP_COOKIES env provided (string content), write to cookie file (secure)
 if (process.env.YTDLP_COOKIES && !fs.existsSync(cookieFilePath)) {
   try {
     fs.writeFileSync(cookieFilePath, process.env.YTDLP_COOKIES, { mode: 0o600 });
-  } catch (e) {}
+    console.log('Wrote cookies file to', cookieFilePath);
+  } catch (e) {
+    console.warn('Failed to write cookies file from YTDLP_COOKIES env:', e.message);
+  }
 }
 
 function getYoutubeHeaders() {
@@ -53,8 +57,12 @@ async function checkCmdVersion(cmd, args = ['--version']) {
 }
 
 async function init() {
+  console.log('Using yt-dlp:', fs.existsSync(localYtDlp) ? localYtDlp : 'yt-dlp (PATH)');
+  console.log('Using ffmpeg:', fs.existsSync(localFfmpeg) ? localFfmpeg : 'ffmpeg (PATH)');
   const ytCheck = fs.existsSync(localYtDlp) ? await checkCmdVersion(localYtDlp) : { ok: false, error: 'Binary not found' };
   const ffCheck = fs.existsSync(localFfmpeg) ? await checkCmdVersion(localFfmpeg, ['-version']) : { ok: false, error: 'Binary not found in bin; fallback may exist on PATH' };
+  console.log('yt-dlp:', ytCheck);
+  console.log('ffmpeg:', ffCheck);
 }
 init();
 
@@ -75,6 +83,7 @@ function runYtDlpWithArgs(extraArgs = [], opts = {}) {
       args.unshift('--cookies', cookieFilePath);
     }
 
+    console.log('Spawning yt-dlp:', exe, args.join(' '));
     const child = spawn(exe, args, { env: { ...process.env }, ...opts });
 
     let stdout = '';
@@ -84,12 +93,14 @@ function runYtDlpWithArgs(extraArgs = [], opts = {}) {
       child.stdout.on('data', d => {
         const s = d.toString();
         stdout += s;
+        process.stdout.write('[yt-dlp stdout] ' + s);
       });
     }
     if (child.stderr) {
       child.stderr.on('data', d => {
         const s = d.toString();
         stderr += s;
+        process.stderr.write('[yt-dlp stderr] ' + s);
       });
     }
 
@@ -102,22 +113,19 @@ function runYtDlpWithArgs(extraArgs = [], opts = {}) {
 }
 
 async function progressiveYtdlp(actionArgs) {
-  const attempts = [];
-
-  attempts.push({ label: 'base', args: [...actionArgs] });
-  attempts.push({ label: 'geo_allow', args: ['--geo-bypass', '--allow-unplayable-formats', ...actionArgs] });
-  attempts.push({
-    label: 'extractor_args_missing_pot',
-    args: ['--extractor-args', 'youtube:formats=missing_pot,player_client=android', ...actionArgs]
-  });
-  attempts.push({ label: 'final_allow_with_cookies', args: ['--allow-unplayable-formats', '--geo-bypass', ...actionArgs] });
+  const attempts = [
+    { label: 'base', args: [...actionArgs] },
+    { label: 'geo_allow', args: ['--geo-bypass', '--allow-unplayable-formats', ...actionArgs] },
+    { label: 'extractor_args_missing_pot', args: ['--extractor-args', 'youtube:formats=missing_pot,player_client=android', ...actionArgs] },
+    { label: 'final_allow_with_cookies', args: ['--allow-unplayable-formats', '--geo-bypass', ...actionArgs] }
+  ];
 
   const errors = [];
   for (const at of attempts) {
     try {
       const result = await runYtDlpWithArgs(at.args, { stdio: ['ignore', 'pipe', 'pipe'] });
       const combined = (result.stdout || '') + (result.stderr || '');
-      if (/playability status: UNPLAYABLE/i.test(combined) || /\bThis content isn’t available\b/i.test(combined) || /\bThis content isn't available\b/i.test(combined)) {
+      if (/playability status: UNPLAYABLE/i.test(combined) || /\bThis content isn't available\b/i.test(combined)) {
         errors.push({ attempt: at.label, stderr: tail(result.stderr, 200), stdout: tail(result.stdout, 50) });
         continue;
       }
@@ -130,15 +138,35 @@ async function progressiveYtdlp(actionArgs) {
     const name = e.attempt || 'unknown';
     if (e.err) {
       const s = e.err.stderr || e.err.stdout || e.err.error || JSON.stringify(e.err);
-      return `=== Attempt ${name} ===\n${tail(s,200)}\n`;
+      return `=== Attempt ${name} ===\n${tail(s, 200)}\n`;
     } else {
-      return `=== Attempt ${name} ===\n${tail(e.stderr || '',200)}\n`;
+      return `=== Attempt ${name} ===\n${tail(e.stderr || '', 200)}\n`;
     }
   }).join('\n');
   const err = new Error('All yt-dlp attempts failed. See details.');
   err.details = aggregated;
   throw err;
 }
+
+// New endpoint to check format availability
+app.post('/api/check-format', async (req, res) => {
+  const { url, videoItag, audioItag } = req.body;
+  if (!url) return res.status(400).json({ error: 'Missing URL' });
+
+  try {
+    const info = await fetchVideoInfo(url);
+    const formatExists = info.formats.some(f => f.itag === videoItag) &&
+                         (!audioItag || info.audioFormats.some(a => a.itag === audioItag));
+    
+    if (!formatExists) {
+      return res.status(404).json({ error: 'Requested format not available' });
+    }
+    
+    res.json({ available: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not verify format availability', details: err.message });
+  }
+});
 
 app.post('/api/info', async (req, res) => {
   const url = req.body.url;
@@ -154,11 +182,7 @@ app.post('/api/info', async (req, res) => {
   ];
 
   try {
-    const { result } = await (async () => {
-      const r = await progressiveYtdlp(baseArgs);
-      return r;
-    })();
-
+    const { result } = await progressiveYtdlp(baseArgs);
     try {
       const firstBrace = result.stdout.indexOf('{');
       const jsonText = firstBrace >= 0 ? result.stdout.slice(firstBrace) : result.stdout;
@@ -167,10 +191,22 @@ app.post('/api/info', async (req, res) => {
       const allFormats = info.formats || [];
       const videoFormats = allFormats.filter(f => f.vcodec && f.vcodec !== 'none').map(f => {
         const sizeMB = f.filesize ? Math.round(f.filesize / (1024 * 1024)) : (f.filesize_approx ? Math.round(f.filesize_approx / (1024 * 1024)) : 0);
-        return { resolution: f.format_note || (f.height ? `${f.height}p` : 'Unknown'), codec: [f.vcodec, f.acodec].filter(Boolean).join('+'), container: f.ext, sizeMB, bitrate: f.tbr || 0, itag: f.format_id, hasAudio: f.acodec !== 'none' };
+        return { 
+          resolution: f.format_note || (f.height ? `${f.height}p` : 'Unknown'), 
+          codec: [f.vcodec, f.acodec].filter(Boolean).join('+'), 
+          container: f.ext, 
+          sizeMB, 
+          bitrate: f.tbr || 0, 
+          itag: f.format_id, 
+          hasAudio: f.acodec !== 'none' 
+        };
       }).sort((a,b) => (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0));
 
-      const audioFormats = allFormats.filter(f => f.acodec && f.acodec !== 'none' && (!f.height || f.vcodec === 'none')).map(f => ({ itag: f.format_id, bitrate: f.tbr || 0, container: f.ext })).sort((a,b) => b.bitrate - a.bitrate);
+      const audioFormats = allFormats.filter(f => f.acodec && f.acodec !== 'none' && (!f.height || f.vcodec === 'none')).map(f => ({ 
+        itag: f.format_id, 
+        bitrate: f.tbr || 0, 
+        container: f.ext 
+      })).sort((a,b) => b.bitrate - a.bitrate);
 
       let date = 'Unknown';
       if (info.upload_date) date = formatDate(info.upload_date);
@@ -187,10 +223,12 @@ app.post('/api/info', async (req, res) => {
         uploader: info.uploader || 'Unknown'
       });
     } catch (parseErr) {
-      return res.status(500).json({ error: 'Failed to parse video info', details: tail((parseErr && parseErr.message) || '', 200) });
+      console.error('Failed to parse yt-dlp JSON:', parseErr);
+      return res.status(500).json({ error: 'Failed to parse video info', details: parseErr.message });
     }
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to get video info', details: err.details || err.message || tail(String(err), 400) });
+    console.error('api/info error:', err);
+    return res.status(500).json({ error: 'Failed to get video info', details: err.details || err.message });
   }
 });
 
@@ -213,37 +251,41 @@ app.get('/api/download/progress', (req, res) => {
 const embedMetadata = async (filePath, metadata) => {
   const tempPath = path.join(downloadsDir, `meta_temp_${path.basename(filePath)}`);
   let thumbPath = null;
+  
   async function downloadToFile(url, dest) {
     const response = await axios.get(url, { responseType: 'stream', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.youtube.com/' } });
     await pipeline(response.data, fs.createWriteStream(dest));
   }
-  try {
-    if (metadata && metadata.thumbnail && /^https?:\/\//i.test(metadata.thumbnail)) {
-      thumbPath = path.join(downloadsDir, `thumb_${uuidv4()}.jpg`);
-      try { await downloadToFile(metadata.thumbnail, thumbPath); } catch (e) { thumbPath = null; }
-    } else if (metadata && metadata.thumbnail && fs.existsSync(metadata.thumbnail)) thumbPath = metadata.thumbnail;
 
-    let args;
-    if (thumbPath) {
-      args = ['-y', '-i', filePath, '-i', thumbPath, '-map', '0', '-map', '1', '-c', 'copy', '-metadata', `title=${metadata.title||''}`, '-metadata', `artist=${metadata.artist||''}`, '-metadata', `comment=Downloaded with Online Downloader`, '-disposition:v:1', 'attached_pic', tempPath];
-    } else {
-      args = ['-y', '-i', filePath, '-c', 'copy', '-metadata', `title=${metadata.title||''}`, '-metadata', `artist=${metadata.artist||''}`, '-metadata', `comment=Downloaded with Online Downloader`, tempPath];
+  try {
+    if (metadata?.thumbnail?.startsWith('http')) {
+      thumbPath = path.join(downloadsDir, `thumb_${uuidv4()}.jpg`);
+      try { await downloadToFile(metadata.thumbnail, thumbPath); } catch (e) { console.warn('Thumb download failed:', e.message); }
     }
 
+    const ffExe = fs.existsSync(localFfmpeg) ? localFfmpeg : 'ffmpeg';
+    const args = ['-y', '-i', filePath];
+    if (thumbPath) args.push('-i', thumbPath, '-map', '0', '-map', '1', '-c', 'copy', '-disposition:v:1', 'attached_pic');
+    args.push('-metadata', `title=${metadata.title||''}`, '-metadata', `artist=${metadata.artist||''}`, '-metadata', 'comment=Downloaded with Online Downloader', tempPath);
+
     await new Promise((resolve, reject) => {
-      const ffExe = fs.existsSync(localFfmpeg) ? localFfmpeg : 'ffmpeg';
       const ff = spawn(ffExe, args, { env: { ...process.env } });
       let stderr = '';
       ff.stderr.on('data', d => stderr += d.toString());
-      ff.on('error', e => reject(e));
+      ff.on('error', reject);
       ff.on('close', code => {
         if (code === 0) {
-          try { fs.renameSync(tempPath, filePath); if (thumbPath && thumbPath.includes('thumb_') && fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath); } catch (e) {}
+          try { 
+            fs.renameSync(tempPath, filePath); 
+            if (thumbPath?.includes('thumb_')) fs.unlinkSync(thumbPath); 
+          } catch (e) {}
           resolve();
-        } else reject(new Error(`FFmpeg failed code ${code}. stderr: ${tail(stderr,200)}`));
+        } else reject(new Error(`FFmpeg failed (code ${code}): ${tail(stderr,200)}`));
       });
     });
-  } catch (err) { throw err; }
+  } catch (err) {
+    throw err;
+  }
 };
 
 app.post('/api/download', async (req, res) => {
@@ -254,23 +296,24 @@ app.post('/api/download', async (req, res) => {
   const baseOutput = path.join(downloadsDir, id);
   const finalFilePath = `${baseOutput}.mp4`;
 
-  let args = [
+  let formatOption = 'bestvideo+bestaudio/best';
+  if (videoItag && audioItag) formatOption = `${videoItag}+${audioItag}`;
+  else if (videoItag) formatOption = `${videoItag}`;
+
+  const args = [
     '--no-warnings', '--ignore-errors', '--no-check-certificate', '--newline', '--progress',
     '--ffmpeg-location', binDir, ...getYoutubeHeaders(), '--no-playlist',
-    '-o', `${baseOutput}.%(ext)s`, url
+    '-o', `${baseOutput}.%(ext)s`, url,
+    '-f', formatOption,
+    '--merge-output-format', 'mp4',
+    '--postprocessor-args', '-c:v copy -c:a aac -b:a 192k'
   ];
-  if (videoItag && audioItag) args.push('-f', `${videoItag}+${audioItag}`);
-  else if (videoItag) args.push('-f', `${videoItag}`);
-  else args.push('-f', 'bestvideo+bestaudio');
-
-  args.push('--merge-output-format', 'mp4', '--postprocessor-args', '-c:v copy -c:a aac -b:a 192k');
-  args = args.filter(Boolean);
 
   const attemptLabels = [
     { label: 'base', args },
     { label: 'geo_allow', args: ['--geo-bypass','--allow-unplayable-formats', ...args] },
     { label: 'extractor_args_missing_pot', args: ['--extractor-args','youtube:formats=missing_pot,player_client=android', ...args] },
-    { label: 'fallback_format', args: ['--geo-bypass','--allow-unplayable-formats', ...args, '-f', 'best'] }
+    { label: 'final_allow_with_cookies', args: ['--allow-unplayable-formats','--geo-bypass', ...args] }
   ];
 
   let lastErr = null;
@@ -281,6 +324,7 @@ app.post('/api/download', async (req, res) => {
       if (process.env.YTDLP_PROXY) spawnArgs.unshift('--proxy', process.env.YTDLP_PROXY);
       if (fs.existsSync(cookieFilePath)) spawnArgs.unshift('--cookies', cookieFilePath);
 
+      console.log('Spawning yt-dlp for download attempt', at.label, exe, spawnArgs.slice(0, 12).join(' ') + ' ...');
       const child = spawn(exe, spawnArgs, { stdio: ['ignore','pipe','pipe'], env: { ...process.env } });
 
       let stdout = '';
@@ -290,6 +334,7 @@ app.post('/api/download', async (req, res) => {
       child.stdout.on('data', chunk => {
         const t = chunk.toString();
         stdout += t;
+        process.stdout.write('[yt-dlp stdout] ' + t);
         const m = t.match(progressRegex);
         if (m) progressEmitter.emit('progress', { progress: parseFloat(m[1]) });
         if (t.includes('Destination:')) progressEmitter.emit('progress', { status: 'Downloading...' });
@@ -299,6 +344,7 @@ app.post('/api/download', async (req, res) => {
       child.stderr.on('data', chunk => {
         const t = chunk.toString();
         stderr += t;
+        process.stderr.write('[yt-dlp stderr] ' + t);
         const m = t.match(progressRegex);
         if (m) progressEmitter.emit('progress', { progress: parseFloat(m[1]) });
       });
@@ -315,7 +361,7 @@ app.post('/api/download', async (req, res) => {
       if (result.code !== 0) {
         lastErr = result;
         const combined = (result.stderr || '') + (result.stdout || '');
-        if (/playability status: UNPLAYABLE/i.test(combined) || /\bThis content isn’t available\b/i.test(combined) || /\bThis content isn't available\b/i.test(combined)) {
+        if (/playability status: UNPLAYABLE/i.test(combined) || /\bThis content isn't available\b/i.test(combined)) {
           continue;
         }
         continue;
@@ -329,17 +375,24 @@ app.post('/api/download', async (req, res) => {
       try {
         const info = await fetchVideoInfo(url);
         await embedMetadata(finalFilePath, { title: info.title, artist: info.uploader, thumbnail: info.thumbnail });
-      } catch (metaErr) {}
+      } catch (metaErr) {
+        console.warn('Metadata embed failed:', metaErr.message);
+      }
 
       try {
         const files = fs.readdirSync(downloadsDir);
-        files.forEach(f => { if (f.startsWith(id) && !f.endsWith('.mp4')) try { fs.unlinkSync(path.join(downloadsDir, f)); } catch(e){} });
+        files.forEach(f => { 
+          if (f.startsWith(id) && !f.endsWith('.mp4')) {
+            try { fs.unlinkSync(path.join(downloadsDir, f)); } catch(e){} 
+          }
+        });
       } catch (e) {}
 
       progressEmitter.emit('progress', { complete: true, file: `${id}.mp4` });
       return res.json({ success: true, file: `${id}.mp4` });
     } catch (err) {
       lastErr = err;
+      console.error(`Download attempt ${at.label} error:`, err.message || err);
     }
   }
 
@@ -354,21 +407,57 @@ async function fetchVideoInfo(url) {
     const firstBrace = r.result.stdout.indexOf('{');
     const jsonText = firstBrace >= 0 ? r.result.stdout.slice(firstBrace) : r.result.stdout;
     const info = JSON.parse(jsonText);
-    return { title: info.title || 'Untitled Video', uploader: info.uploader || 'Unknown', thumbnail: info.thumbnail || '' };
+    return { 
+      title: info.title || 'Untitled Video', 
+      uploader: info.uploader || 'Unknown', 
+      thumbnail: info.thumbnail || '',
+      formats: info.formats || [],
+      audioFormats: (info.formats || []).filter(f => f.acodec && f.acodec !== 'none' && (!f.height || f.vcodec === 'none'))
+    };
   } catch (err) {
     throw err;
   }
 }
 
-function formatDuration(seconds) { const mins = Math.floor(seconds / 60); const secs = Math.floor(seconds % 60); return `${mins}:${secs.toString().padStart(2,'0')}`; }
-function formatViews(views) { if (!views) return '0 views'; const count = parseInt(views); if (isNaN(count)) return '0 views'; if (count > 1000000) return `${(count/1000000).toFixed(1)}M views`; if (count > 1000) return `${(count/1000).toFixed(1)}K views`; return `${count} views`; }
-function formatDate(dateStr) { if (!dateStr) return 'Unknown'; try { if (/^\\d{8}$/.test(dateStr)) { const y=dateStr.slice(0,4), m=dateStr.slice(4,6), d=dateStr.slice(6,8); return new Date(`${y}-${m}-${d}`).toLocaleDateString(); } return new Date(dateStr).toLocaleDateString(); } catch (e) { return 'Unknown'; } }
+function formatDuration(seconds) { 
+  const mins = Math.floor(seconds / 60); 
+  const secs = Math.floor(seconds % 60); 
+  return `${mins}:${secs.toString().padStart(2,'0')}`; 
+}
+
+function formatViews(views) { 
+  if (!views) return '0 views'; 
+  const count = parseInt(views); 
+  if (isNaN(count)) return '0 views'; 
+  if (count > 1000000) return `${(count/1000000).toFixed(1)}M views`; 
+  if (count > 1000) return `${(count/1000).toFixed(1)}K views`; 
+  return `${count} views`; 
+}
+
+function formatDate(dateStr) { 
+  if (!dateStr) return 'Unknown'; 
+  try { 
+    if (/^\d{8}$/.test(dateStr)) { 
+      const y=dateStr.slice(0,4), m=dateStr.slice(4,6), d=dateStr.slice(6,8); 
+      return new Date(`${y}-${m}-${d}`).toLocaleDateString(); 
+    } 
+    return new Date(dateStr).toLocaleDateString(); 
+  } catch (e) { return 'Unknown'; } 
+}
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/downloads', express.static(downloadsDir, { setHeaders: (res, filePath) => { res.set('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`); } }));
+app.use('/downloads', express.static(downloadsDir, { 
+  setHeaders: (res, filePath) => { 
+    res.set('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`); 
+  } 
+}));
 
 app.get('/api/probe', (req, res) => {
-  res.json({ yt_dlp: { path: localYtDlp, exists: fs.existsSync(localYtDlp) }, ffmpeg: { path: localFfmpeg, exists: fs.existsSync(localFfmpeg) }, cookie: { path: cookieFilePath, exists: fs.existsSync(cookieFilePath) } });
+  res.json({ 
+    yt_dlp: { path: localYtDlp, exists: fs.existsSync(localYtDlp) }, 
+    ffmpeg: { path: localFfmpeg, exists: fs.existsSync(localFfmpeg) }, 
+    cookie: { path: cookieFilePath, exists: fs.existsSync(cookieFilePath) } 
+  });
 });
 
 process.on('uncaughtException', e => console.error('uncaughtException', e));
