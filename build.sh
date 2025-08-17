@@ -39,4 +39,3 @@ rm -rf "$tmpdir"
 
 echo "✅ Binaries installed successfully into ./bin:"
 ls -lh ./bin || true
-
