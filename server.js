@@ -1,4 +1,4 @@
-// server.js — updated with progressive yt-dlp fallbacks for UNPLAYABLE cases
+// server.js — updated with safer format selection and debug list-formats on failure
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -58,7 +58,7 @@ async function checkCmdVersion(cmd, args = ['--version']) {
 }
 
 async function init() {
-  console.log('Using yt-dlp:', fs.existsSync(localYtDlp) ? localYtDlp : 'yt-dlp (PATH)');
+  console.log('Using yt-dlp:', fs.existsSync(localYtDlp) ? localYtDlp : (process.platform === 'linux' ? 'yt-dlp' : 'yt-dlp (PATH)'));
   console.log('Using ffmpeg:', fs.existsSync(localFfmpeg) ? localFfmpeg : 'ffmpeg (PATH)');
   const ytCheck = fs.existsSync(localYtDlp) ? await checkCmdVersion(localYtDlp) : { ok: false, error: 'Binary not found' };
   const ffCheck = fs.existsSync(localFfmpeg) ? await checkCmdVersion(localFfmpeg, ['-version']) : { ok: false, error: 'Binary not found in bin; fallback may exist on PATH' };
@@ -117,7 +117,7 @@ function runYtDlpWithArgs(extraArgs = [], opts = {}) {
 // progressive fallback function to get JSON info or run download
 async function progressiveYtdlp(actionArgs) {
   // actionArgs: array of args to run for the basic attempt (not including -v/--ignore-config)
-  // return { success: true, result } or throw aggregated error with details
+  // return { ok: true, attempt, result } or throw aggregated error with details
   const attempts = [];
 
   // Attempt 1: base
@@ -127,28 +127,23 @@ async function progressiveYtdlp(actionArgs) {
   attempts.push({ label: 'geo_allow', args: ['--geo-bypass', '--allow-unplayable-formats', ...actionArgs] });
 
   // Attempt 3: extractor-args to try missing_pot / alternative player client (may help)
-  // Note: extractor-args format is a single argument; combine multiple with commas (no spaces)
   attempts.push({
     label: 'extractor_args_missing_pot',
     args: ['--extractor-args', 'youtube:formats=missing_pot,player_client=android', ...actionArgs]
   });
 
-  // Attempt 4: if cookie file present, ensure it's used (run with cookies automatically via runYtDlpWithArgs)
-  // Note: runYtDlpWithArgs already auto-adds cookies if cookie file exists, so last attempt is same but with flags
+  // Attempt 4: final with allow-unplayable-formats & cookies
   attempts.push({ label: 'final_allow_with_cookies', args: ['--allow-unplayable-formats', '--geo-bypass', ...actionArgs] });
 
   const errors = [];
   for (const at of attempts) {
     try {
       const result = await runYtDlpWithArgs(at.args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      // quick check: if stdout contains "playabilityStatus" UNPLAYABLE or if stderr contains that message,
-      // we treat as failure and continue fallback
       const combined = (result.stdout || '') + (result.stderr || '');
       if (/playability status: UNPLAYABLE/i.test(combined) || /\bThis content isn’t available\b/i.test(combined) || /\bThis content isn't available\b/i.test(combined)) {
         errors.push({ attempt: at.label, stderr: tail(result.stderr, 200), stdout: tail(result.stdout, 50) });
-        continue; // try next fallback
+        continue;
       }
-      // success
       return { ok: true, attempt: at.label, result };
     } catch (err) {
       errors.push({ attempt: at.label, err });
@@ -185,12 +180,9 @@ app.post('/api/info', async (req, res) => {
   ];
 
   try {
-    const { result } = await (async () => {
-      const r = await progressiveYtdlp(baseArgs);
-      return r;
-    })();
+    const r = await progressiveYtdlp(baseArgs);
+    const result = r.result;
 
-    // parse JSON from stdout
     try {
       const firstBrace = result.stdout.indexOf('{');
       const jsonText = firstBrace >= 0 ? result.stdout.slice(firstBrace) : result.stdout;
@@ -291,20 +283,76 @@ app.post('/api/download', async (req, res) => {
   const baseOutput = path.join(downloadsDir, id);
   const finalFilePath = `${baseOutput}.mp4`;
 
+  // --------- SAFER FORMAT SELECTION ---------
+  // Pre-check info and choose safest format selection strategy
+  let chosenFormat = null;
+  let infoObj = null;
+  try {
+    const dumpArgs = ['--dump-json', '--no-warnings', '--ignore-errors', '--no-check-certificate', ...getYoutubeHeaders(), url];
+    const infoRes = await progressiveYtdlp(dumpArgs);
+    const out = infoRes.result.stdout || '';
+    const firstBrace = out.indexOf('{');
+    const jsonText = firstBrace >= 0 ? out.slice(firstBrace) : out;
+    infoObj = JSON.parse(jsonText);
+  } catch (e) {
+    console.warn('Warning: could not fetch full info for format selection, falling back to defaults', e && e.stderr ? tail(e.stderr,200) : (e && e.message) ? e.message : e);
+  }
+
+  // safe default: prefer mp4 container if available (avoids webm/opus issues)
+  const preferredFormatFallback = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
+
+  // Validate requested itags when provided
+  if (videoItag && audioItag) {
+    if (infoObj && infoObj.formats) {
+      const vidExists = infoObj.formats.some(f => String(f.format_id) === String(videoItag));
+      const audExists = infoObj.formats.some(f => String(f.format_id) === String(audioItag));
+      if (vidExists && audExists) {
+        chosenFormat = `${videoItag}+${audioItag}`;
+      } else {
+        chosenFormat = preferredFormatFallback;
+      }
+    } else {
+      chosenFormat = `${videoItag}+${audioItag}`;
+    }
+  } else if (videoItag && !audioItag) {
+    if (infoObj && infoObj.formats) {
+      const vidFmt = infoObj.formats.find(f => String(f.format_id) === String(videoItag));
+      if (vidFmt) {
+        if (vidFmt.acodec && vidFmt.acodec !== 'none') {
+          chosenFormat = `${videoItag}`;
+        } else {
+          const sameExtAudio = infoObj.formats.find(f => f.acodec && f.acodec !== 'none' && f.ext === vidFmt.ext);
+          const anyAudio = infoObj.formats.find(f => f.acodec && f.acodec !== 'none');
+          const audioCandidate = sameExtAudio || anyAudio;
+          if (audioCandidate) chosenFormat = `${videoItag}+${audioCandidate.format_id}`;
+          else chosenFormat = `${videoItag}`;
+        }
+      } else {
+        chosenFormat = preferredFormatFallback;
+      }
+    } else {
+      chosenFormat = preferredFormatFallback;
+    }
+  } else {
+    chosenFormat = preferredFormatFallback;
+  }
+
+  // Build base yt-dlp args (safer defaults)
   let args = [
     '--no-warnings', '--ignore-errors', '--no-check-certificate', '--newline', '--progress',
     '--ffmpeg-location', binDir, ...getYoutubeHeaders(), '--no-playlist',
     '-o', `${baseOutput}.%(ext)s`, url
   ];
-  if (videoItag && audioItag) args.push('-f', `${videoItag}+${audioItag}`);
-  else if (videoItag) args.push('-f', `${videoItag}`);
-  else args.push('-f', 'bestvideo+bestaudio');
 
-  args.push('--merge-output-format', 'mp4', '--postprocessor-args', '-c:v copy -c:a aac -b:a 192k');
+  if (chosenFormat) args.push('-f', chosenFormat);
+
+  // Ensure mp4 output reliably (recode as last resort)
+  args.push('--merge-output-format', 'mp4');
+  // recode-video is heavier but helps produce mp4-compatible file when inputs are webm
+  args.push('--recode-video', 'mp4');
+  args.push('--postprocessor-args', '-c:a aac -b:a 192k');
   args = args.filter(Boolean);
 
-  // We'll call progressiveYtdlp with the constructed args (note progressiveYtdlp will automatically add -v/--ignore-config)
-  // But we still need to stream/monitor progress — for downloads we spawn directly to capture real-time progress
   // We'll attempt with fallbacks manually to capture progress events for the successful attempt
   const attemptLabels = [
     { label: 'base', args },
@@ -316,7 +364,6 @@ app.post('/api/download', async (req, res) => {
   let lastErr = null;
   for (const at of attemptLabels) {
     try {
-      // Spawn interactive so we can emit progress events
       const exe = fs.existsSync(localYtDlp) ? localYtDlp : 'yt-dlp';
       const spawnArgs = ['-v','--ignore-config', ...at.args];
       if (process.env.YTDLP_PROXY) spawnArgs.unshift('--proxy', process.env.YTDLP_PROXY);
@@ -360,13 +407,10 @@ app.post('/api/download', async (req, res) => {
       if (result.code !== 0) {
         lastErr = result;
         console.warn(`Attempt ${at.label} exited ${result.code}`);
-        // If stderr indicates playability UNPLAYABLE, we'll continue to next attempt
         const combined = (result.stderr || '') + (result.stdout || '');
         if (/playability status: UNPLAYABLE/i.test(combined) || /\bThis content isn’t available\b/i.test(combined) || /\bThis content isn't available\b/i.test(combined)) {
-          // continue to next attempt
           continue;
         }
-        // else other error; continue to next attempt
         continue;
       }
 
@@ -377,12 +421,11 @@ app.post('/api/download', async (req, res) => {
       }
 
       // success path
-      // Try to inject metadata
       try {
         const info = await fetchVideoInfo(url);
         await embedMetadata(finalFilePath, { title: info.title, artist: info.uploader, thumbnail: info.thumbnail });
       } catch (metaErr) {
-        console.warn('Metadata embed failed:', metaErr.message || metaErr);
+        console.warn('Metadata embed failed:', metaErr && metaErr.message ? metaErr.message : metaErr);
       }
 
       // cleanup other temp files
@@ -400,9 +443,17 @@ app.post('/api/download', async (req, res) => {
     }
   }
 
-  // all attempts failed
-  const details = (lastErr && lastErr.stderr) ? tail(lastErr.stderr, 400) : (lastErr && lastErr.details) ? lastErr.details : JSON.stringify(lastErr);
-  return res.status(500).json({ error: 'Download failed after fallback attempts', details });
+  // all attempts failed — attempt debug list-formats to aid debugging
+  try {
+    const listRes = await runYtDlpWithArgs(['--list-formats', url], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const formatsDump = tail(listRes.stdout || listRes.stderr || '', 1200);
+    const details = (lastErr && lastErr.stderr) ? tail(lastErr.stderr, 400) : (lastErr && lastErr.details) ? lastErr.details : JSON.stringify(lastErr);
+    return res.status(500).json({ error: 'Download failed after fallback attempts', details, formats: formatsDump });
+  } catch (listErr) {
+    const details = (lastErr && lastErr.stderr) ? tail(lastErr.stderr, 400) : (lastErr && lastErr.details) ? lastErr.details : JSON.stringify(lastErr);
+    const listDetails = (listErr && listErr.stderr) ? tail(listErr.stderr, 400) : (listErr && listErr.message) ? listErr.message : JSON.stringify(listErr);
+    return res.status(500).json({ error: 'Download failed after fallback attempts', details, list_error: listDetails });
+  }
 });
 
 // fetchVideoInfo helper (uses progressive fallback)
@@ -436,4 +487,5 @@ process.on('uncaughtException', e => console.error('uncaughtException', e));
 process.on('unhandledRejection', e => console.error('unhandledRejection', e));
 
 app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT} (port ${PORT})`));
+
 
