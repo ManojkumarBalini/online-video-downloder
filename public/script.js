@@ -26,63 +26,63 @@ function createParticles() {
     
         particlesContainer.appendChild(particle);
     }
-}
-
-// DOM Elements
-const fetchBtn = document.getElementById('fetchBtn');
-const videoUrl = document.getElementById('videoUrl');
-const resultsSection = document.getElementById('resultsSection');
-const platformTabs = document.querySelectorAll('.platform-tab');
-const platformHint = document.getElementById('platformHint');
-const qualityOptions = document.getElementById('qualityOptions');
-const downloadStatus = document.getElementById('downloadStatus');
-const progressFill = document.getElementById('progressFill');
-const statusText = document.getElementById('statusText');
-const completedDownload = document.getElementById('completedDownload');
-const newDownloadBtn = document.getElementById('newDownload');
-const videoTitle = document.getElementById('videoTitle');
-const videoThumb = document.getElementById('videoThumb');
-const videoDuration = document.getElementById('videoDuration');
-const videoViews = document.getElementById('videoViews');
-const videoDate = document.getElementById('videoDate');
-const pasteBtn = document.getElementById('pasteBtn');
-const clearBtn = document.getElementById('clearBtn');
-const voiceBtn = document.getElementById('voiceBtn');
-const historyBtn = document.getElementById('historyBtn');
-const historyPanel = document.getElementById('historyPanel');
-const dragDropZone = document.getElementById('dragDropZone');
-const historyList = document.getElementById('historyList');
-const closeHistory = document.getElementById('closeHistory');
-const audioModal = document.getElementById('audioModal');
-const closeModal = document.getElementById('closeModal');
-const cancelAudio = document.getElementById('cancelAudio');
-const confirmAudioBtn = document.getElementById('confirmAudio');
-const audioOptionsContainer = document.getElementById('audioOptions');
-
-let currentPlatform = 'youtube';
-let currentVideoUrl = '';
-let currentVideoInfo = null;
-let eventSource = null;
-let downloadTimeout = null;
-let isDownloading = false;
-let downloadHandled = false;
-let downloadFinalized = false;
-let recognition = null;
-let currentScanAnimation = null;
-
-// Platform hints
-const platformHints = {
+  }
+  
+  // DOM Elements
+  const fetchBtn = document.getElementById('fetchBtn');
+  const videoUrl = document.getElementById('videoUrl');
+  const resultsSection = document.getElementById('resultsSection');
+  const platformTabs = document.querySelectorAll('.platform-tab');
+  const platformHint = document.getElementById('platformHint');
+  const qualityOptions = document.getElementById('qualityOptions');
+  const downloadStatus = document.getElementById('downloadStatus');
+  const progressFill = document.getElementById('progressFill');
+  const statusText = document.getElementById('statusText');
+  const completedDownload = document.getElementById('completedDownload');
+  const newDownloadBtn = document.getElementById('newDownload');
+  const videoTitle = document.getElementById('videoTitle');
+  const videoThumb = document.getElementById('videoThumb');
+  const videoDuration = document.getElementById('videoDuration');
+  const videoViews = document.getElementById('videoViews');
+  const videoDate = document.getElementById('videoDate');
+  const pasteBtn = document.getElementById('pasteBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const voiceBtn = document.getElementById('voiceBtn');
+  const historyBtn = document.getElementById('historyBtn');
+  const historyPanel = document.getElementById('historyPanel');
+  const dragDropZone = document.getElementById('dragDropZone');
+  const historyList = document.getElementById('historyList');
+  const closeHistory = document.getElementById('closeHistory');
+  const audioModal = document.getElementById('audioModal');
+  const closeModal = document.getElementById('closeModal');
+  const cancelAudio = document.getElementById('cancelAudio');
+  const confirmAudioBtn = document.getElementById('confirmAudio');
+  const audioOptionsContainer = document.getElementById('audioOptions');
+  
+  let currentPlatform = 'youtube';
+  let currentVideoUrl = '';
+  let currentVideoInfo = null;
+  let eventSource = null;
+  let downloadTimeout = null;
+  let isDownloading = false;
+  let downloadHandled = false;
+  let downloadFinalized = false;
+  let recognition = null;
+  let currentScanAnimation = null;
+  
+  // Platform hints
+  const platformHints = {
     youtube: "YouTube videos in 4K, 8K, HD, or MP3 format",
     instagram: "Instagram Reels, Stories, IGTV, and posts",
     twitter: "Twitter (X) videos from tweets and moments",
     facebook: "Facebook videos from pages, groups, and profiles",
     paste: "Paste a valid video URL from any supported platform"
-};
-
-// =====================
-// QUICK ACTIONS TOOLBAR
-// =====================
-pasteBtn.addEventListener('click', async () => {
+  };
+  
+  // =====================
+  // QUICK ACTIONS TOOLBAR
+  // =====================
+  pasteBtn.addEventListener('click', async () => {
     try {
         const text = await navigator.clipboard.readText();
         if (text) {
@@ -97,22 +97,22 @@ pasteBtn.addEventListener('click', async () => {
         statusText.textContent = "Clipboard access denied. Please paste manually.";
         statusText.className = "status-text warning";
     }
-});
-
-clearBtn.addEventListener('click', () => {
+  });
+  
+  clearBtn.addEventListener('click', () => {
     videoUrl.value = '';
     videoUrl.focus();
     clearBtn.classList.add('animate');
     setTimeout(() => clearBtn.classList.remove('animate'), 500);
-});
-
-voiceBtn.addEventListener('click', () => {
+  });
+  
+  voiceBtn.addEventListener('click', () => {
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
         alert("Your browser doesn't support voice commands. Try Chrome or Edge.");
         return;
     }
-
+  
     voiceBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
     voiceBtn.classList.add('recording');
     
@@ -138,12 +138,12 @@ voiceBtn.addEventListener('click', () => {
     };
     
     recognition.start();
-});
-
-// =====================
-// HISTORY MANAGEMENT
-// =====================
-function saveToHistory(videoInfo) {
+  });
+  
+  // =====================
+  // HISTORY MANAGEMENT
+  // =====================
+  function saveToHistory(videoInfo) {
     const history = JSON.parse(localStorage.getItem('downloadHistory') || '[]');
     
     // Avoid duplicates
@@ -160,9 +160,9 @@ function saveToHistory(videoInfo) {
         
         localStorage.setItem('downloadHistory', JSON.stringify(history));
     }
-}
-
-function loadDownloadHistory() {
+  }
+  
+  function loadDownloadHistory() {
     const history = JSON.parse(localStorage.getItem('downloadHistory') || '[]');
     historyList.innerHTML = '';
     
@@ -200,30 +200,30 @@ function loadDownloadHistory() {
             fetchVideoInfo();
         });
     });
-}
-
-historyBtn.addEventListener('click', () => {
+  }
+  
+  historyBtn.addEventListener('click', () => {
     loadDownloadHistory();
     historyPanel.style.display = 'block';
-});
-
-closeHistory.addEventListener('click', () => {
+  });
+  
+  closeHistory.addEventListener('click', () => {
     historyPanel.style.display = 'none';
-});
-
-// =====================
-// DRAG & DROP FUNCTIONALITY
-// =====================
-dragDropZone.addEventListener('dragover', (e) => {
+  });
+  
+  // =====================
+  // DRAG & DROP FUNCTIONALITY
+  // =====================
+  dragDropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     dragDropZone.classList.add('active');
-});
-
-dragDropZone.addEventListener('dragleave', () => {
+  });
+  
+  dragDropZone.addEventListener('dragleave', () => {
     dragDropZone.classList.remove('active');
-});
-
-dragDropZone.addEventListener('drop', (e) => {
+  });
+  
+  dragDropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dragDropZone.classList.remove('active');
     
@@ -234,12 +234,12 @@ dragDropZone.addEventListener('drop', (e) => {
             fetchVideoInfo();
         }
     }
-});
-
-// =====================
-// KEYBOARD SHORTCUTS
-// =====================
-document.addEventListener('keydown', (e) => {
+  });
+  
+  // =====================
+  // KEYBOARD SHORTCUTS
+  // =====================
+  document.addEventListener('keydown', (e) => {
     // Ctrl+V to paste
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
         pasteBtn.click();
@@ -259,28 +259,28 @@ document.addEventListener('keydown', (e) => {
             historyPanel.style.display = 'none';
         }
     }
-});
-
-// =====================
-// SCI-FI LOADING ANIMATION
-// =====================
-function addScanAnimation(element) {
+  });
+  
+  // =====================
+  // SCI-FI LOADING ANIMATION
+  // =====================
+  function addScanAnimation(element) {
     const scan = document.createElement('div');
     scan.className = 'scan-animation';
     element.appendChild(scan);
     return scan;
-}
-
-function removeScanAnimation(scan) {
+  }
+  
+  function removeScanAnimation(scan) {
     try {
         if (scan && scan.remove) scan.remove();
     } catch (e) { /* ignore */ }
-}
-
-// =====================
-// AUDIO SELECTION MODAL
-// =====================
-function showAudioSelector(videoItag) {
+  }
+  
+  // =====================
+  // AUDIO SELECTION MODAL
+  // =====================
+  function showAudioSelector(videoItag) {
     // Clear previous options
     audioOptionsContainer.innerHTML = '';
     
@@ -291,7 +291,7 @@ function showAudioSelector(videoItag) {
     const workingAudioFormats = currentVideoInfo.audioFormats.filter(audio => 
       audio.bitrate > 0 && audio.container
     );
-
+  
     workingAudioFormats.forEach(audio => {
       const option = document.createElement('div');
       option.className = 'audio-option';
@@ -316,7 +316,7 @@ function showAudioSelector(videoItag) {
       
       audioOptionsContainer.appendChild(option);
     });
-
+  
     // Handle confirm button
     confirmAudioBtn.onclick = () => {
       const selectedOption = document.querySelector('.audio-option.selected');
@@ -328,24 +328,24 @@ function showAudioSelector(videoItag) {
         alert('Please select an audio quality');
       }
     };
-}
-
-function closeAudioModal() {
+  }
+  
+  function closeAudioModal() {
     audioModal.classList.remove('active');
-}
-
-// Add event listeners for modal
-closeModal.addEventListener('click', closeAudioModal);
-cancelAudio.addEventListener('click', closeAudioModal);
-
-// =====================
-// MAIN FUNCTIONALITY
-// =====================
-// Event Listeners
-fetchBtn.addEventListener('click', fetchVideoInfo);
-newDownloadBtn.addEventListener('click', resetDownloader);
-
-platformTabs.forEach(tab => {
+  }
+  
+  // Add event listeners for modal
+  closeModal.addEventListener('click', closeAudioModal);
+  cancelAudio.addEventListener('click', closeAudioModal);
+  
+  // =====================
+  // MAIN FUNCTIONALITY
+  // =====================
+  // Event Listeners
+  fetchBtn.addEventListener('click', fetchVideoInfo);
+  newDownloadBtn.addEventListener('click', resetDownloader);
+  
+  platformTabs.forEach(tab => {
     tab.addEventListener('click', () => {
         platformTabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
@@ -371,15 +371,15 @@ platformTabs.forEach(tab => {
                 break;
         }
     });
-});
-
-function setDownloadButtonsDisabled(state) {
+  });
+  
+  function setDownloadButtonsDisabled(state) {
     document.querySelectorAll('.download-action').forEach(btn => {
         try { btn.disabled = !!state; } catch (e) {}
     });
-}
-
-function clearSearchResultsAndInput() {
+  }
+  
+  function clearSearchResultsAndInput() {
     closeEventSource();
     clearTimeout(downloadTimeout);
   
@@ -399,17 +399,17 @@ function clearSearchResultsAndInput() {
     progressFill.style.width = '0%';
     statusText.textContent = "Preparing download...";
     statusText.className = "status-text";
-}
-
-function normalizeYouTubeUrl(url) {
+  }
+  
+  function normalizeYouTubeUrl(url) {
     if (url.includes('youtu.be/')) {
         const videoId = url.split('youtu.be/')[1].split('?')[0].split('&')[0];
         return `https://www.youtube.com/watch?v=${videoId}`;
     }
     return url;
-}
-
-async function fetchVideoInfo() {
+  }
+  
+  async function fetchVideoInfo() {
     let url = videoUrl.value.trim();
   
     if (url.includes('youtu.be')) {
@@ -455,9 +455,9 @@ async function fetchVideoInfo() {
         fetchBtn.innerHTML = '<i class="fas fa-download"></i> Fetch Video';
         fetchBtn.disabled = false;
     }
-}
-
-function displayVideoResults(videoData) {
+  }
+  
+  function displayVideoResults(videoData) {
     videoTitle.textContent = videoData.title;
     videoThumb.src = videoData.thumbnail;
     videoDuration.textContent = videoData.duration;
@@ -506,9 +506,9 @@ function displayVideoResults(videoData) {
   
     resultsSection.style.display = 'block';
     resultsSection.scrollIntoView({ behavior: 'smooth' });
-}
-
-function parseProgressText(text) {
+  }
+  
+  function parseProgressText(text) {
     try {
         const parsed = JSON.parse(text);
         if (parsed && typeof parsed === 'object') return parsed;
@@ -524,9 +524,9 @@ function parseProgressText(text) {
     if (text.toLowerCase().includes('error')) return { error: text.trim() };
   
     return { status: text.trim() };
-}
-
-function handleProgressData(data) {
+  }
+  
+  function handleProgressData(data) {
     let payload = data;
     if (typeof data === 'string') {
         payload = parseProgressText(data);
@@ -583,18 +583,18 @@ function handleProgressData(data) {
             }, 800);
         }
     }
-}
-
-function closeEventSource() {
+  }
+  
+  function closeEventSource() {
     if (!eventSource) return;
   
     try {
         eventSource.close();
     } catch (e) { /* ignore */ }
     eventSource = null;
-}
-
-async function startDownload(url, videoItag, audioItag = null) {
+  }
+  
+  async function startDownload(url, videoItag, audioItag = null) {
     if (isDownloading) {
         alert('A download is already in progress. Please wait until it finishes.');
         return;
@@ -628,20 +628,6 @@ async function startDownload(url, videoItag, audioItag = null) {
     }, 30000);
   
     try {
-        // First check if format is available
-        if (videoItag) {
-            const response = await fetch('/api/check-format', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, videoItag, audioItag })
-            });
-            
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Format not available');
-            }
-        }
-
         // EventSource for progress
         try {
             eventSource = new EventSource(`/api/download/progress`);
@@ -695,13 +681,6 @@ async function startDownload(url, videoItag, audioItag = null) {
         if (eventSource) {
             try { closeEventSource(); } catch (e) {}
         }
-
-        if (err.message.includes('Format not available')) {
-            statusText.textContent = "Selected format unavailable. Trying best available...";
-            setTimeout(() => startDownload(url), 1000); // Retry with best available
-            return;
-        }
-        
         statusText.textContent = `Error: ${err.message}`;
         statusText.className = "status-text error";
         console.error(err);
@@ -715,9 +694,9 @@ async function startDownload(url, videoItag, audioItag = null) {
             currentScanAnimation = null;
         }
     }
-}
-
-function downloadComplete(filename) {
+  }
+  
+  function downloadComplete(filename) {
     if (downloadFinalized) return;
     downloadFinalized = true;
     downloadHandled = true;
@@ -752,9 +731,9 @@ function downloadComplete(filename) {
         downloadLink.click();
         showConfetti();
     }, 500);
-}
-
-function resetDownloader() {
+  }
+  
+  function resetDownloader() {
     completedDownload.style.display = 'none';
     qualityOptions.style.display = 'grid';
     downloadStatus.style.display = 'none';
@@ -778,9 +757,9 @@ function resetDownloader() {
     }
   
     window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function showConfetti() {
+  }
+  
+  function showConfetti() {
     const colors = ['#4285f4', '#34a853', '#ea4335', '#fbbc05', '#ffffff'];
     const container = document.querySelector('.video-card');
   
@@ -808,10 +787,10 @@ function showConfetti() {
   
         animation.onfinish = () => confetti.remove();
     }
-}
-
-// Initialize on load
-window.addEventListener('load', () => {
+  }
+  
+  // Initialize on load
+  window.addEventListener('load', () => {
     createParticles();
     
     // Smooth scroll for anchor links
@@ -829,4 +808,4 @@ window.addEventListener('load', () => {
             }
         });
     });
-});
+  });
